@@ -2,6 +2,7 @@
 
 #define ENOENT  2
 #define EIO     5
+#define EINTR   4
 #define EBADF   9
 #define ECHILD 10
 #define EAGAIN 11
@@ -14,6 +15,7 @@
 #define ENOTDIR 20
 #define EROFS  30
 #define ENOSYS 38
+#define EOVERFLOW 75
 
 int *__errno_location(void);
 
