@@ -4,6 +4,11 @@
 #include <string.h>
 
 int open(const char *path, int flags, ...) {
+    const int known = O_ACCMODE | O_CREAT | O_DIRECTORY;
+    if (flags & ~known) {
+        errno = EINVAL;
+        return -1;
+    }
     uint32_t native = 0;
     switch (flags & O_ACCMODE) {
     case O_RDONLY: native |= NARC_OPEN_READ; break;

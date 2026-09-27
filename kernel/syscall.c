@@ -144,6 +144,45 @@ static struct kernel_result handle_seek(uint64_t fd, int64_t offset, uint64_t or
     return result_ok((uint64_t)value);
 }
 
+static struct kernel_result handle_file_info(uint64_t fd, uint64_t address) {
+    if (!task_fd_valid((int)fd)) return result_error(NARC_BAD_HANDLE);
+
+    narc_file_info_t info = { 0 };
+    struct file *file = task_fd_file((int)fd);
+    if (file) {
+        info.inode = file->node.ino;
+        info.size = file->node.size;
+        info.mode = file->node.mode;
+        info.type = file->node.type == VFS_DIR ? NARC_FILE_DIRECTORY : NARC_FILE_REGULAR;
+    } else {
+        info.mode = 0020000 | 0666;
+        info.type = NARC_FILE_CHARACTER;
+    }
+    if (copy_to_user(address, &info, sizeof(info)) != 0)
+        return result_error(NARC_BAD_ADDRESS);
+    return result_ok(0);
+}
+
+static struct kernel_result handle_read_dir(uint64_t fd, uint64_t address) {
+    struct file *file = task_fd_file((int)fd);
+    if (!file) return task_fd_valid((int)fd) ? result_error(NARC_NOT_DIRECTORY) :
+                                              result_error(NARC_BAD_HANDLE);
+    if (file->node.type != VFS_DIR) return result_error(NARC_NOT_DIRECTORY);
+
+    struct vfs_dirent source;
+    int result = vfs_readdir(file, &source);
+    if (result < 0) return result_error(NARC_IO_ERROR);
+    if (!result) return result_ok(0);
+
+    narc_dir_entry_t entry = { 0 };
+    entry.inode = source.ino;
+    entry.type = source.type == VFS_DIR ? NARC_FILE_DIRECTORY : NARC_FILE_REGULAR;
+    for (size_t i = 0; i < sizeof(entry.name); i++) entry.name[i] = source.name[i];
+    if (copy_to_user(address, &entry, sizeof(entry)) != 0)
+        return result_error(NARC_BAD_ADDRESS);
+    return result_ok(1);
+}
+
 static uint64_t page_align(uint64_t value) {
     if (value > UINT64_MAX - (PAGE_SIZE - 1)) return 0;
     return (value + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
@@ -235,6 +274,12 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return;
     case NARC_SYS_SEEK:
         return_result(frame, handle_seek(a1, (int64_t)a2, a3));
+        return;
+    case NARC_SYS_FILE_INFO:
+        return_result(frame, handle_file_info(a1, a2));
+        return;
+    case NARC_SYS_READ_DIR:
+        return_result(frame, handle_read_dir(a1, a2));
         return;
     case NARC_SYS_MAP:
         return_result(frame, handle_map(a1, a2));

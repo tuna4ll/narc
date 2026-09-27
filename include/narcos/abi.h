@@ -21,6 +21,8 @@ enum narc_syscall {
     NARC_SYS_READ      = 0x0102,
     NARC_SYS_WRITE     = 0x0103,
     NARC_SYS_SEEK      = 0x0104,
+    NARC_SYS_FILE_INFO = 0x0105,
+    NARC_SYS_READ_DIR  = 0x0106,
 
     NARC_SYS_MAP       = 0x0200,
     NARC_SYS_UNMAP     = 0x0201,
@@ -61,6 +63,29 @@ enum narc_map_flags {
     NARC_MAP_READ  = 1u << 0,
     NARC_MAP_WRITE = 1u << 1,
 };
+
+enum narc_file_type {
+    NARC_FILE_REGULAR   = 1,
+    NARC_FILE_DIRECTORY = 2,
+    NARC_FILE_CHARACTER = 3,
+};
+
+#define NARC_NAME_MAX 64
+
+typedef struct narc_file_info {
+    uint64_t inode;
+    uint64_t size;
+    uint32_t mode;
+    uint8_t type;
+    uint8_t reserved[3];
+} narc_file_info_t;
+
+typedef struct narc_dir_entry {
+    uint64_t inode;
+    uint8_t type;
+    char name[NARC_NAME_MAX];
+    uint8_t reserved[7];
+} narc_dir_entry_t;
 
 typedef struct narc_result {
     int64_t value;
