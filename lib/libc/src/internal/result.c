@@ -17,6 +17,9 @@ static int status_errno(uint32_t status) {
     case NARC_NOT_SUPPORTED:    return ENOSYS;
     case NARC_NO_CHILD:         return ECHILD;
     case NARC_TRY_AGAIN:        return EAGAIN;
+    case NARC_EXISTS:           return EEXIST;
+    case NARC_NO_SPACE:         return ENOSPC;
+    case NARC_NOT_EMPTY:        return ENOTEMPTY;
     default:                    return EIO;
     }
 }

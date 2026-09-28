@@ -152,9 +152,21 @@ static int load(struct address_space *space, const char *path, const char *const
                 size_t argc, const char *const envp[], size_t envc,
                 uint64_t *entry, uint64_t *stack) {
     struct file executable;
-    if (!argc || vfs_open(path, &executable) != 0 || executable.node.type != VFS_REG) return -1;
-    const uint8_t *blob = executable.node.data;
-    size_t size = (size_t)executable.node.size;
+    if (!argc || vfs_open(path, VFS_OPEN_READ, &executable) != VFS_OK) return -1;
+    struct vfs_info info;
+    vfs_file_info(&executable, &info);
+    if (info.type != VFS_REG || info.size > VFS_FILE_MAX) {
+        vfs_close(&executable);
+        return -1;
+    }
+    static uint8_t image[VFS_FILE_MAX];
+    size_t size = (size_t)info.size;
+    if (vfs_read(&executable, image, size) != (long)size) {
+        vfs_close(&executable);
+        return -1;
+    }
+    vfs_close(&executable);
+    const uint8_t *blob = image;
     if (size < sizeof(struct elf64_ehdr)) return -1;
     const struct elf64_ehdr *eh = (const struct elf64_ehdr *)blob;
     if (eh->ident[0] != 0x7f || eh->ident[1] != 'E' || eh->ident[2] != 'L' ||

@@ -47,6 +47,9 @@ enum narc_status {
     NARC_NOT_SUPPORTED    = 12,
     NARC_NO_CHILD         = 13,
     NARC_TRY_AGAIN        = 14,
+    NARC_EXISTS           = 15,
+    NARC_NO_SPACE         = 16,
+    NARC_NOT_EMPTY        = 17,
 };
 
 enum narc_open_flags {
@@ -54,6 +57,9 @@ enum narc_open_flags {
     NARC_OPEN_WRITE     = 1u << 1,
     NARC_OPEN_CREATE    = 1u << 2,
     NARC_OPEN_DIRECTORY = 1u << 3,
+    NARC_OPEN_TRUNCATE  = 1u << 4,
+    NARC_OPEN_EXCLUSIVE = 1u << 5,
+    NARC_OPEN_APPEND    = 1u << 6,
 };
 
 enum narc_seek_origin {

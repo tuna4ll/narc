@@ -16,6 +16,9 @@
 #define EROFS  30
 #define ENOSYS 38
 #define EOVERFLOW 75
+#define EEXIST 17
+#define ENOSPC 28
+#define ENOTEMPTY 39
 
 int *__errno_location(void);
 

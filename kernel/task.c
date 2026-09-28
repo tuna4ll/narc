@@ -80,6 +80,7 @@ static int file_new(int type) {
 static void file_put(int index) {
     if (index < 0 || index >= OPEN_MAX || !files[index].refs) return;
     if (--files[index].refs) return;
+    if (files[index].type == FD_VFS) vfs_close(&files[index].file);
     if (files[index].type == FD_PIPE_R || files[index].type == FD_PIPE_W)
         pipes[files[index].pipe].used--;
     memset(&files[index], 0, sizeof(files[index]));
@@ -271,11 +272,16 @@ void task_set_fs_base(uint64_t value) {
 
 void task_set_mmap_next(uint64_t value) { current->mmap_next = value; }
 
-int task_fd_open(const char *path) {
+int task_fd_open(const char *path, uint32_t flags, int *status) {
     int index = file_new(FD_VFS);
-    if (index < 0) return -2;
-    if (vfs_open(path, &files[index].file) != 0) {
+    if (index < 0) {
+        *status = VFS_NO_SPACE;
+        return -1;
+    }
+    enum vfs_status result = vfs_open(path, flags, &files[index].file);
+    if (result != VFS_OK) {
         file_put(index);
+        *status = result;
         return -1;
     }
     for (int fd = 3; fd < TASK_FD_MAX; fd++) {
@@ -284,7 +290,8 @@ int task_fd_open(const char *path) {
         return fd;
     }
     file_put(index);
-    return -2;
+    *status = VFS_NO_SPACE;
+    return -1;
 }
 
 static struct open_file *fd_get(int fd) {
@@ -342,6 +349,7 @@ long task_fd_write(int fd, const void *buf, size_t len) {
         console_write(buf, len);
         return (long)len;
     }
+    if (open->type == FD_VFS) return vfs_write(&open->file, buf, len);
     if (open->type != FD_PIPE_W) return -1;
     struct pipe *pipe = &pipes[open->pipe];
     size_t done = len < PIPE_SIZE - pipe->count ? len : PIPE_SIZE - pipe->count;
