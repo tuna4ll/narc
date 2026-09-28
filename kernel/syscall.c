@@ -1,6 +1,7 @@
 #include <kernel/mm.h>
 #include <kernel/syscall.h>
 #include <kernel/task.h>
+#include <kernel/user.h>
 #include <kernel/vfs.h>
 #include <narcos/abi.h>
 #include <stddef.h>
@@ -58,6 +59,34 @@ static int copy_to_user(uint64_t dst, const void *src, size_t len) {
         len -= chunk;
     }
     return 0;
+}
+
+static int copy_string(char *dst, uint64_t src, size_t capacity) {
+    for (size_t i = 0; i < capacity; i++) {
+        if (copy_from_user(&dst[i], src + i, 1) != 0) return -1;
+        if (!dst[i]) return 0;
+    }
+    return -1;
+}
+
+static int copy_string_list(uint64_t address, char storage[16][VFS_PATH_MAX],
+                            const char *values[16], size_t *count) {
+    *count = 0;
+    if (!address) return 0;
+    while (*count < 16) {
+        uint64_t item;
+        if (copy_from_user(&item, address + *count * sizeof(item), sizeof(item)) != 0)
+            return -1;
+        if (!item) return 0;
+        if (copy_string(storage[*count], item, VFS_PATH_MAX) != 0) return -1;
+        values[*count] = storage[*count];
+        (*count)++;
+    }
+    uint64_t terminator;
+    if (copy_from_user(&terminator, address + *count * sizeof(terminator),
+                       sizeof(terminator)) != 0)
+        return -1;
+    return terminator ? -1 : 0;
 }
 
 static struct kernel_result handle_read(uint64_t fd, uint64_t buffer, uint64_t length) {
@@ -237,6 +266,27 @@ static struct kernel_result handle_unmap(uint64_t address, uint64_t length) {
     return result_ok(0);
 }
 
+static uint32_t handle_exec(struct task_frame *frame, uint64_t path_address,
+                            uint64_t argv_address, uint64_t envp_address) {
+    char path[VFS_PATH_MAX];
+    char argument_storage[16][VFS_PATH_MAX];
+    char environment_storage[16][VFS_PATH_MAX];
+    const char *arguments[16];
+    const char *environment[16];
+    size_t argument_count, environment_count;
+    if (copy_string(path, path_address, sizeof(path)) != 0 ||
+        copy_string_list(argv_address, argument_storage, arguments, &argument_count) != 0 ||
+        copy_string_list(envp_address, environment_storage, environment,
+                         &environment_count) != 0)
+        return NARC_BAD_ADDRESS;
+    if (!argument_count) {
+        arguments[0] = path;
+        argument_count = 1;
+    }
+    return user_exec(frame, path, arguments, argument_count,
+                     environment, environment_count) == 0 ? NARC_OK : NARC_NOT_FOUND;
+}
+
 static void return_result(struct task_frame *frame, struct kernel_result result) {
     arch_syscall_return2(frame, result.value, result.status);
 }
@@ -260,6 +310,27 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return_result(frame, result_ok(0));
         task_yield(frame);
         return;
+    case NARC_SYS_FORK: {
+        int pid = task_fork(frame);
+        return_result(frame, pid < 0 ? result_error(NARC_TRY_AGAIN) : result_ok((uint64_t)pid));
+        return;
+    }
+    case NARC_SYS_WAIT: {
+        if (a2 && !vmm_user_range_ok(vmm_space_current(), a2, sizeof(int), 1)) {
+            return_result(frame, result_error(NARC_BAD_ADDRESS));
+            return;
+        }
+        long value;
+        if (task_wait(frame, (int)a1, a2, (int)a3, &value)) return;
+        return_result(frame, value < 0 ? result_error(NARC_NO_CHILD) :
+                                        result_ok((uint64_t)value));
+        return;
+    }
+    case NARC_SYS_EXEC: {
+        uint32_t status = handle_exec(frame, a1, a2, a3);
+        if (status != NARC_OK) return_result(frame, result_error(status));
+        return;
+    }
     case NARC_SYS_OPEN:
         return_result(frame, handle_open(a1, a2, a3));
         return;

@@ -12,6 +12,9 @@ extern "C" {
 narc_result_t narc_abi_query(void);
 narc_result_t narc_getpid(void);
 narc_result_t narc_yield(void);
+narc_result_t narc_fork(void);
+narc_result_t narc_wait(int pid, int *status, uint32_t options);
+narc_result_t narc_exec(const char *path, char *const argv[], char *const envp[]);
 NARC_NORETURN void narc_exit(int status);
 
 narc_result_t narc_open(const char *path, size_t path_length, uint32_t flags);

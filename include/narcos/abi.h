@@ -15,6 +15,9 @@ enum narc_syscall {
     NARC_SYS_EXIT      = 0x0001,
     NARC_SYS_GETPID    = 0x0002,
     NARC_SYS_YIELD     = 0x0003,
+    NARC_SYS_FORK      = 0x0004,
+    NARC_SYS_WAIT      = 0x0005,
+    NARC_SYS_EXEC      = 0x0006,
 
     NARC_SYS_OPEN      = 0x0100,
     NARC_SYS_CLOSE     = 0x0101,

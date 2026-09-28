@@ -159,7 +159,7 @@ int task_fork(struct task_frame *frame) {
     child->mmap_next = current->mmap_next;
     child->fs_base = current->fs_base;
     child->frame = *frame;
-    arch_syscall_return(&child->frame, 0);
+    arch_syscall_return2(&child->frame, 0, 0);
     arch_task_state_save(current->arch_state);
     memcpy(child->arch_state, current->arch_state, ARCH_STATE_SIZE);
     for (int fd = 0; fd < TASK_FD_MAX; fd++) {
@@ -246,7 +246,7 @@ void task_exit(struct task_frame *frame, int status) {
     if (parent && parent->state == TASK_BLOCKED &&
         (parent->wait_pid == -1 || parent->wait_pid == old->pid)) {
         copy_status(parent, parent->wait_status, old->exit_status << 8);
-        arch_syscall_return(&parent->frame, (uint64_t)old->pid);
+        arch_syscall_return2(&parent->frame, (uint64_t)old->pid, 0);
         parent->state = TASK_RUNNABLE;
         reap = 1;
     }

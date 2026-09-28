@@ -105,14 +105,21 @@ static int put_stack(struct address_space *space, uint64_t *sp,
 }
 
 static int build_stack(struct address_space *space, const struct elf64_ehdr *eh,
-                       uint64_t phdr, const char *const argv[], size_t argc, uint64_t *result) {
+                       uint64_t phdr, const char *const argv[], size_t argc,
+                       const char *const envp[], size_t envc, uint64_t *result) {
     static const uint8_t random[16] = {
         0x6e, 0x61, 0x72, 0x63, 0x4f, 0x73, 0x2d, 0x6c,
         0x69, 0x74, 0x74, 0x6c, 0x65, 0x2d, 0x6f, 0x73,
     };
     if (map_range(space, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_TOP) != 0) return -1;
-    uint64_t sp = USER_STACK_TOP, argp[16], randomp;
-    if (argc > 16) return -1;
+    uint64_t sp = USER_STACK_TOP, argp[16], env_addresses[16], randomp;
+    if (argc > 16 || envc > 16) return -1;
+    for (size_t n = envc; n; n--) {
+        size_t len = 0;
+        while (envp[n - 1][len]) len++;
+        if (put_stack(space, &sp, envp[n - 1], len + 1, &env_addresses[n - 1]) != 0)
+            return -1;
+    }
     for (size_t n = argc; n; n--) {
         size_t len = 0;
         while (argv[n - 1][len]) len++;
@@ -120,11 +127,12 @@ static int build_stack(struct address_space *space, const struct elf64_ehdr *eh,
     }
     if (put_stack(space, &sp, random, sizeof(random), &randomp) != 0) return -1;
     sp &= ~0xfULL;
-    uint64_t words[48];
+    uint64_t words[64];
     size_t n = 0;
     words[n++] = argc;
     for (size_t i = 0; i < argc; i++) words[n++] = argp[i];
     words[n++] = 0;
+    for (size_t i = 0; i < envc; i++) words[n++] = env_addresses[i];
     words[n++] = 0;
     words[n++] = AT_PHDR; words[n++] = phdr;
     words[n++] = AT_PHENT; words[n++] = eh->phentsize;
@@ -141,7 +149,8 @@ static int build_stack(struct address_space *space, const struct elf64_ehdr *eh,
 }
 
 static int load(struct address_space *space, const char *path, const char *const argv[],
-                size_t argc, uint64_t *entry, uint64_t *stack) {
+                size_t argc, const char *const envp[], size_t envc,
+                uint64_t *entry, uint64_t *stack) {
     struct file executable;
     if (!argc || vfs_open(path, &executable) != 0 || executable.node.type != VFS_REG) return -1;
     const uint8_t *blob = executable.node.data;
@@ -175,16 +184,17 @@ static int load(struct address_space *space, const char *path, const char *const
              va < align_up(ph[i].vaddr + ph[i].memsz); va += PAGE_SIZE)
             if (vmm_protect_user(space, va, (ph[i].flags & PF_W) ? VMM_WRITE : 0) != 0) return -1;
     }
-    if (build_stack(space, eh, phdr, argv, argc, stack) != 0) return -1;
+    if (build_stack(space, eh, phdr, argv, argc, envp, envc, stack) != 0) return -1;
     *entry = eh->entry;
     return 0;
 }
 
-int user_exec(struct task_frame *frame, const char *path, const char *const argv[], size_t argc) {
+int user_exec(struct task_frame *frame, const char *path, const char *const argv[], size_t argc,
+              const char *const envp[], size_t envc) {
     struct address_space space;
     uint64_t entry, stack;
     if (vmm_space_create(&space) != 0) return -1;
-    if (load(&space, path, argv, argc, &entry, &stack) != 0) {
+    if (load(&space, path, argv, argc, envp, envc, &entry, &stack) != 0) {
         vmm_space_destroy(&space);
         return -1;
     }
@@ -196,7 +206,7 @@ void user_start(void) {
     static const char *argv[] = { "/sbin/init" };
     struct task *task = task_create();
     uint64_t entry, stack;
-    if (!task || load(task_space(task), argv[0], argv, 1, &entry, &stack) != 0) {
+    if (!task || load(task_space(task), argv[0], argv, 1, 0, 0, &entry, &stack) != 0) {
         console_puts("[panic] cannot start init\n");
         arch_halt();
     }
