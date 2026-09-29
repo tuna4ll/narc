@@ -24,6 +24,11 @@ narc_result_t narc_write(int fd, const void *buffer, size_t length);
 narc_result_t narc_seek(int fd, int64_t offset, uint32_t origin);
 narc_result_t narc_file_info(int fd, narc_file_info_t *info);
 narc_result_t narc_read_dir(int fd, narc_dir_entry_t *entry);
+narc_result_t narc_mkdir(const char *path, size_t path_length, uint32_t mode);
+narc_result_t narc_unlink(const char *path, size_t path_length);
+narc_result_t narc_rmdir(const char *path, size_t path_length);
+narc_result_t narc_rename(const char *old_path, size_t old_length,
+                          const char *new_path, size_t new_length);
 
 narc_result_t narc_map(size_t length, uint32_t flags);
 narc_result_t narc_unmap(void *address, size_t length);

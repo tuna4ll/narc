@@ -81,6 +81,15 @@ static int copy_string(char *dst, uint64_t src, size_t capacity) {
     return -1;
 }
 
+static uint32_t copy_path(char path[VFS_PATH_MAX], uint64_t address, uint64_t length) {
+    if (!length || length >= VFS_PATH_MAX) return NARC_INVALID_ARGUMENT;
+    if (copy_from_user(path, address, (size_t)length) != 0) return NARC_BAD_ADDRESS;
+    for (uint64_t i = 0; i < length; i++)
+        if (!path[i]) return NARC_INVALID_ARGUMENT;
+    path[length] = 0;
+    return NARC_OK;
+}
+
 static int copy_string_list(uint64_t address, char storage[16][VFS_PATH_MAX],
                             const char *values[16], size_t *count) {
     *count = 0;
@@ -159,11 +168,8 @@ static struct kernel_result handle_open(uint64_t address, uint64_t length, uint6
         return result_error(NARC_INVALID_ARGUMENT);
 
     char path[VFS_PATH_MAX];
-    if (copy_from_user(path, address, (size_t)length) != 0)
-        return result_error(NARC_BAD_ADDRESS);
-    for (uint64_t i = 0; i < length; i++)
-        if (!path[i]) return result_error(NARC_INVALID_ARGUMENT);
-    path[length] = 0;
+    uint32_t path_status = copy_path(path, address, length);
+    if (path_status != NARC_OK) return result_error(path_status);
     if (path[0] != '/') return result_error(NARC_NOT_FOUND);
 
     uint32_t native_flags = 0;
@@ -179,6 +185,34 @@ static struct kernel_result handle_open(uint64_t address, uint64_t length, uint6
     if (fd < 0) return status == VFS_NO_SPACE ? result_error(NARC_TOO_MANY_HANDLES) :
                                                result_error(vfs_error(status));
     return result_ok((uint64_t)fd);
+}
+
+static struct kernel_result handle_mkdir(uint64_t address, uint64_t length, uint64_t mode) {
+    char path[VFS_PATH_MAX];
+    uint32_t status = copy_path(path, address, length);
+    if (status != NARC_OK) return result_error(status);
+    enum vfs_status result = vfs_mkdir(path, (uint32_t)mode);
+    return result == VFS_OK ? result_ok(0) : result_error(vfs_error(result));
+}
+
+static struct kernel_result handle_unlink(uint64_t address, uint64_t length,
+                                          int remove_directory) {
+    char path[VFS_PATH_MAX];
+    uint32_t status = copy_path(path, address, length);
+    if (status != NARC_OK) return result_error(status);
+    enum vfs_status result = vfs_unlink(path, remove_directory);
+    return result == VFS_OK ? result_ok(0) : result_error(vfs_error(result));
+}
+
+static struct kernel_result handle_rename(uint64_t old_address, uint64_t old_length,
+                                          uint64_t new_address, uint64_t new_length) {
+    char old_path[VFS_PATH_MAX], new_path[VFS_PATH_MAX];
+    uint32_t status = copy_path(old_path, old_address, old_length);
+    if (status != NARC_OK) return result_error(status);
+    status = copy_path(new_path, new_address, new_length);
+    if (status != NARC_OK) return result_error(status);
+    enum vfs_status result = vfs_rename(old_path, new_path);
+    return result == VFS_OK ? result_ok(0) : result_error(vfs_error(result));
 }
 
 static struct kernel_result handle_close(uint64_t fd) {
@@ -378,6 +412,20 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
     case NARC_SYS_READ_DIR:
         return_result(frame, handle_read_dir(a1, a2));
         return;
+    case NARC_SYS_MKDIR:
+        return_result(frame, handle_mkdir(a1, a2, a3));
+        return;
+    case NARC_SYS_UNLINK:
+        return_result(frame, handle_unlink(a1, a2, 0));
+        return;
+    case NARC_SYS_RMDIR:
+        return_result(frame, handle_unlink(a1, a2, 1));
+        return;
+    case NARC_SYS_RENAME: {
+        uint64_t a4 = arch_syscall_arg(frame, 3);
+        return_result(frame, handle_rename(a1, a2, a3, a4));
+        return;
+    }
     case NARC_SYS_MAP:
         return_result(frame, handle_map(a1, a2));
         return;

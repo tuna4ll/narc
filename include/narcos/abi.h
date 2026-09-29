@@ -26,6 +26,10 @@ enum narc_syscall {
     NARC_SYS_SEEK      = 0x0104,
     NARC_SYS_FILE_INFO = 0x0105,
     NARC_SYS_READ_DIR  = 0x0106,
+    NARC_SYS_MKDIR     = 0x0107,
+    NARC_SYS_UNLINK    = 0x0108,
+    NARC_SYS_RMDIR     = 0x0109,
+    NARC_SYS_RENAME    = 0x010a,
 
     NARC_SYS_MAP       = 0x0200,
     NARC_SYS_UNMAP     = 0x0201,

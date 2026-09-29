@@ -25,3 +25,4 @@ int vfprintf(FILE *stream, const char *format, va_list arguments);
 int fprintf(FILE *stream, const char *format, ...);
 int vprintf(const char *format, va_list arguments);
 int printf(const char *format, ...);
+int rename(const char *old_path, const char *new_path);
