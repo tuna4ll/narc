@@ -434,11 +434,24 @@ enum vfs_status vfs_rename(const char *old_path, const char *new_path) {
         return VFS_INVALID;
     struct vnode *node = find_node(old_normalized);
     if (!node) return VFS_NOT_FOUND;
-    if (find_node(new_normalized)) return VFS_EXISTS;
+    if (str_eq(old_normalized, new_normalized)) return VFS_OK;
+    size_t old_length = str_len(old_normalized);
+    if (node->type == VFS_DIR && str_prefix(new_normalized, old_normalized) &&
+        new_normalized[old_length] == '/')
+        return VFS_INVALID;
     enum vfs_status status = validate_parent(new_normalized);
     if (status != VFS_OK) return status;
 
-    size_t old_length = str_len(old_normalized);
+    struct vnode *target = find_node(new_normalized);
+    if (target) {
+        if (node->type == VFS_DIR && target->type != VFS_DIR)
+            return VFS_NOT_DIRECTORY;
+        if (node->type != VFS_DIR && target->type == VFS_DIR)
+            return VFS_IS_DIRECTORY;
+        if (target->type == VFS_DIR && !directory_empty(target))
+            return VFS_NOT_EMPTY;
+    }
+
     size_t new_length = str_len(new_normalized);
     for (size_t i = 0; i < VFS_NODE_MAX; i++) {
         if (!nodes[i].used || !nodes[i].linked) continue;
@@ -447,6 +460,10 @@ enum vfs_status vfs_rename(const char *old_path, const char *new_path) {
             continue;
         size_t suffix = str_len(nodes[i].path + old_length);
         if (new_length + suffix >= VFS_PATH_MAX) return VFS_INVALID;
+    }
+    if (target) {
+        target->linked = 0;
+        if (!target->refs) release_node(target);
     }
     for (size_t i = 0; i < VFS_NODE_MAX; i++) {
         if (!nodes[i].used || !nodes[i].linked) continue;
