@@ -274,10 +274,7 @@ void task_set_mmap_next(uint64_t value) { current->mmap_next = value; }
 
 int task_fd_open(const char *path, uint32_t flags, int *status) {
     int index = file_new(FD_VFS);
-    if (index < 0) {
-        *status = VFS_NO_SPACE;
-        return -1;
-    }
+    if (index < 0) return -2;
     enum vfs_status result = vfs_open(path, flags, &files[index].file);
     if (result != VFS_OK) {
         file_put(index);
@@ -290,8 +287,7 @@ int task_fd_open(const char *path, uint32_t flags, int *status) {
         return fd;
     }
     file_put(index);
-    *status = VFS_NO_SPACE;
-    return -1;
+    return -2;
 }
 
 static struct open_file *fd_get(int fd) {

@@ -182,8 +182,8 @@ static struct kernel_result handle_open(uint64_t address, uint64_t length, uint6
     if (flags & NARC_OPEN_APPEND) native_flags |= VFS_OPEN_APPEND;
     int status;
     int fd = task_fd_open(path, native_flags, &status);
-    if (fd < 0) return status == VFS_NO_SPACE ? result_error(NARC_TOO_MANY_HANDLES) :
-                                               result_error(vfs_error(status));
+    if (fd == -2) return result_error(NARC_TOO_MANY_HANDLES);
+    if (fd < 0) return result_error(vfs_error(status));
     return result_ok((uint64_t)fd);
 }
 
