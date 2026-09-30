@@ -130,16 +130,27 @@ static int make_path(const struct tar_header *header, char *output) {
 
 static int normalize(const char *path, char *output) {
     if (!path || *path != '/') return -1;
-    size_t length = 0;
-    while (*path && length + 1 < VFS_PATH_MAX) {
-        if (*path == '/' && length && output[length - 1] == '/') {
-            path++;
+    size_t length = 1;
+    output[0] = '/';
+    while (*path) {
+        while (*path == '/') path++;
+        if (!*path) break;
+        const char *component = path;
+        while (*path && *path != '/') path++;
+        size_t component_length = (size_t)(path - component);
+        if (component_length == 1 && component[0] == '.') continue;
+        if (component_length == 2 && component[0] == '.' && component[1] == '.') {
+            while (length > 1 && output[length - 1] != '/') length--;
+            if (length > 1) length--;
             continue;
         }
-        output[length++] = *path++;
+        if (component_length >= VFS_NAME_MAX ||
+            component_length + length + (length > 1) >= VFS_PATH_MAX)
+            return -1;
+        if (length > 1) output[length++] = '/';
+        memcpy(output + length, component, component_length);
+        length += component_length;
     }
-    if (*path) return -1;
-    while (length > 1 && output[length - 1] == '/') length--;
     output[length] = 0;
     return 0;
 }
