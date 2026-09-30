@@ -8,6 +8,9 @@ SYSROOT_INCLUDE := $(SYSROOT)/usr/include
 SYSROOT_LIB := $(SYSROOT)/usr/lib
 SYSROOT_STAMP := $(SYSROOT)/.installed
 USER_APP := $(BUILD)/userland/init
+PABLO_C := $(shell find userland/pablo/src -name '*.c' 2>/dev/null | sort)
+PABLO_OBJ := $(patsubst userland/pablo/%.c,$(BUILD)/userland/pablo/%.o,$(PABLO_C))
+PABLO_HEADERS := $(shell find userland/pablo/include -type f 2>/dev/null | sort)
 INITRAMFS := $(BUILD)/initramfs.tar
 INITRAMFS_ROOT := $(BUILD)/initramfs_root
 USER_BASE := 0x400000
@@ -141,9 +144,13 @@ $(SYSROOT_STAMP): $(LIBC) $(LIBNARC) $(LIBC_CRT0) $(LIBC_CRT1) \
 
 sysroot: $(SYSROOT_STAMP)
 
-$(USER_APP): userland/init.c $(SYSROOT_STAMP)
+$(BUILD)/userland/pablo/%.o: userland/pablo/%.c $(SYSROOT_STAMP) $(PABLO_HEADERS)
 	@mkdir -p $(dir $@)
-	$(USER_CC) $(USER_CFLAGS) $(SYSROOT_LIB)/crt0.o $(SYSROOT_LIB)/crt1.o $< \
+	$(USER_CC) $(USER_CFLAGS) -I userland/pablo/include -c $< -o $@
+
+$(USER_APP): $(PABLO_OBJ) $(SYSROOT_STAMP)
+	@mkdir -p $(dir $@)
+	$(USER_CC) $(USER_CFLAGS) $(SYSROOT_LIB)/crt0.o $(SYSROOT_LIB)/crt1.o $(PABLO_OBJ) \
 		-L$(SYSROOT_LIB) -lc -lnarc $(USER_LDFLAGS) -o $@
 
 userland: $(USER_APP)
