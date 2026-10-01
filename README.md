@@ -27,3 +27,10 @@ if (result.status != NARC_OK) {
 Native syscall IDs are architecture-independent. Calls return their value and
 status in separate registers, represented by `narc_result_t`. User programs
 link with the project-owned `libc.a` and `libnarc.a` archives.
+
+## Init system
+
+Pablo is the PID 1 service supervisor. Its sources are split by responsibility
+under `userland/pablo`; service units live in `/etc/pablo/services`. Pablo
+supports ordered one-shot services, supervised services, restart backoff and
+orphan reaping.
