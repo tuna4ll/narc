@@ -1,4 +1,4 @@
-#include <narcos/narc.h>
+#include <narc/narc.h>
 #include <unistd.h>
 
 _Noreturn void _exit(int status) {

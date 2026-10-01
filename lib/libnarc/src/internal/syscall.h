@@ -1,6 +1,6 @@
 #pragma once
 
-#include <narcos/narc.h>
+#include <narc/narc.h>
 
 narc_result_t __narc_call(uint64_t id, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5,

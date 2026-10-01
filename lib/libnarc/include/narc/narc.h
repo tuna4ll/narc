@@ -1,6 +1,6 @@
 #pragma once
 
-#include <narcos/abi.h>
+#include <narc/abi.h>
 
 #ifdef __cplusplus
 extern "C" {

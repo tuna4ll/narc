@@ -3,7 +3,7 @@
 #include <kernel/task.h>
 #include <kernel/user.h>
 #include <kernel/vfs.h>
-#include <narcos/abi.h>
+#include <narc/abi.h>
 #include <stddef.h>
 #include <stdint.h>
 

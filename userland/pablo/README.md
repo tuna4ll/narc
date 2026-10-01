@@ -1,6 +1,6 @@
 # Pablo
 
-Pablo is the PID 1 service supervisor for narcOs. It loads global settings from
+Pablo is the PID 1 service supervisor for Narc. It loads global settings from
 `/etc/pablo.conf` and one service per file from `/etc/pablo/services`.
 
 ## Service files

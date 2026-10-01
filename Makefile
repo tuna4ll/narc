@@ -81,7 +81,7 @@ LIBC_CRT1 := $(BUILD)/lib/libc/crt1.o
 LIBC := $(BUILD)/lib/libc.a
 LIBC_HEADERS := $(shell find lib/libc/include -type f | sort)
 LIBNARC_HEADERS := $(shell find lib/libnarc/include -type f | sort)
-UAPI_HEADERS := $(shell find include/narcos -type f | sort)
+UAPI_HEADERS := $(shell find include/narc -type f | sort)
 
 COMMON_KERNEL_C := $(shell find kernel -path kernel/arch -prune -o -name '*.c' -print | sort)
 COMMON_KERNEL_S := $(shell find kernel -path kernel/arch -prune -o -name '*.S' -print | sort)
@@ -98,8 +98,8 @@ all: iso
 include recipes/limine/RECIPE
 include recipes/edk2/RECIPE
 
-$(BUILD)/lib/libnarc/%.o: lib/libnarc/%.c include/narcos/abi.h \
-                         lib/libnarc/include/narcos/narc.h
+$(BUILD)/lib/libnarc/%.o: lib/libnarc/%.c include/narc/abi.h \
+                         lib/libnarc/include/narc/narc.h
 	@mkdir -p $(dir $@)
 	$(USER_CC) $(LIBNARC_CFLAGS) $(USER_ARCH_FLAGS) -c $< -o $@
 
@@ -135,7 +135,7 @@ $(SYSROOT_STAMP): $(LIBC) $(LIBNARC) $(LIBC_CRT0) $(LIBC_CRT1) \
 	mkdir -p $(SYSROOT_INCLUDE) $(SYSROOT_LIB)
 	cp -R lib/libc/include/. $(SYSROOT_INCLUDE)/
 	cp -R lib/libnarc/include/. $(SYSROOT_INCLUDE)/
-	cp -R include/narcos $(SYSROOT_INCLUDE)/
+	cp -R include/narc $(SYSROOT_INCLUDE)/
 	cp $(LIBC) $(SYSROOT_LIB)/libc.a
 	cp $(LIBNARC) $(SYSROOT_LIB)/libnarc.a
 	cp $(LIBC_CRT0) $(SYSROOT_LIB)/crt0.o
@@ -189,12 +189,12 @@ iso: $(BUILD)/kernel.elf $(INITRAMFS) $(LIMINE_TOOL)
 	xorriso -as mkisofs -R -r -J $(ISO_BIOS_FLAGS) \
 		-hfsplus -apm-block-size 2048 --efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
-		$(BUILD)/iso_root -o $(DIST)/narcOs-$(ARCH).iso
-	$(if $(filter x86_64,$(ARCH)),$(LIMINE_TOOL) bios-install $(DIST)/narcOs-$(ARCH).iso)
+		$(BUILD)/iso_root -o $(DIST)/narc-$(ARCH).iso
+	$(if $(filter x86_64,$(ARCH)),$(LIMINE_TOOL) bios-install $(DIST)/narc-$(ARCH).iso)
 
 ifeq ($(ARCH),x86_64)
 run run-serial: iso
-	qemu-system-x86_64 -M q35 -m 256M -vga std -cdrom $(DIST)/narcOs-$(ARCH).iso \
+	qemu-system-x86_64 -M q35 -m 256M -vga std -cdrom $(DIST)/narc-$(ARCH).iso \
 		-serial $(if $(filter run-serial,$@),stdio,none) -monitor none -no-reboot -no-shutdown
 else ifeq ($(ARCH),aarch64)
 run run-serial: iso $(EDK2_PREPARED)
@@ -202,7 +202,7 @@ run run-serial: iso $(EDK2_PREPARED)
 	qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -device ramfb \
 		-drive if=pflash,unit=0,format=raw,file=$(EDK2_DIR)/ovmf-code-aarch64.fd,readonly=on \
 		-drive if=pflash,unit=1,format=raw,file=$(BUILD)/ovmf-vars.fd \
-		-cdrom $(DIST)/narcOs-$(ARCH).iso -serial $(if $(filter run-serial,$@),stdio,none) \
+		-cdrom $(DIST)/narc-$(ARCH).iso -serial $(if $(filter run-serial,$@),stdio,none) \
 		-monitor none -no-reboot -no-shutdown
 else
 run run-serial: iso $(EDK2_PREPARED)
@@ -210,7 +210,7 @@ run run-serial: iso $(EDK2_PREPARED)
 	qemu-system-riscv64 -M virt -cpu rv64 -m 256M -device ramfb \
 		-drive if=pflash,unit=0,format=raw,file=$(EDK2_DIR)/ovmf-code-riscv64.fd,readonly=on \
 		-drive if=pflash,unit=1,format=raw,file=$(BUILD)/ovmf-vars.fd \
-		-cdrom $(DIST)/narcOs-$(ARCH).iso -serial $(if $(filter run-serial,$@),stdio,none) \
+		-cdrom $(DIST)/narc-$(ARCH).iso -serial $(if $(filter run-serial,$@),stdio,none) \
 		-monitor none -no-reboot -no-shutdown
 endif
 

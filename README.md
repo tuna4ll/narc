@@ -1,4 +1,4 @@
-# narcOs
+# Narc
 
 A small POSIX-like hobby OS for x86_64, AArch64 and RISC-V 64.
 
@@ -15,7 +15,7 @@ standard C and POSIX surface above it. The build installs both into
 `build/<arch>/sysroot/usr` and links user programs through that sysroot.
 
 ```c
-#include <narcos/narc.h>
+#include <narc/narc.h>
 
 static const char path[] = "/etc/motd";
 narc_result_t result = narc_open(path, sizeof(path) - 1, NARC_OPEN_READ);
