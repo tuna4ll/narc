@@ -160,6 +160,7 @@ $(INITRAMFS): $(USER_APP) $(ROOTFS_FILES)
 	mkdir -p $(INITRAMFS_ROOT)/sbin $(INITRAMFS_ROOT)/bin
 	cp -R userland/rootfs/. $(INITRAMFS_ROOT)/
 	cp $(USER_APP) $(INITRAMFS_ROOT)/sbin/init
+	cp $(USER_APP) $(INITRAMFS_ROOT)/sbin/pablo
 	cp $(USER_APP) $(INITRAMFS_ROOT)/bin/init
 	tar --format=ustar --owner=0 --group=0 --numeric-owner -cf $@ -C $(INITRAMFS_ROOT) .
 
