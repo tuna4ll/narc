@@ -26,3 +26,5 @@ int vmm_unmap_user(struct address_space *space, uint64_t virt);
 int vmm_user_range_ok(struct address_space *space, uint64_t virt, uint64_t len, int write);
 uint64_t vmm_user_phys(struct address_space *space, uint64_t virt);
 int vmm_map_kernel(uint64_t virt, uint64_t phys, uint64_t flags);
+uint64_t vmm_unmap_kernel(uint64_t virt);
+void vmm_kernel_window(uint64_t *base, uint64_t *size);

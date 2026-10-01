@@ -206,6 +206,22 @@ int vmm_map_kernel(uint64_t virt, uint64_t phys, uint64_t flags) {
     return vmm_map(&space, virt, phys, flags, 0);
 }
 
+uint64_t vmm_unmap_kernel(uint64_t virt) {
+    struct address_space space = { .root = read_cr3() };
+    uint64_t *pte = get_pte(&space, virt, 0, 0);
+    if (!pte || !(*pte & PTE_PRESENT)) return 0;
+    uint64_t phys = *pte & ADDR_MASK;
+    *pte = 0;
+    __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
+    return phys;
+}
+
+void vmm_kernel_window(uint64_t *base, uint64_t *size) {
+    *base = 0xffffe00000000000ULL;
+    *size = 1ULL << 39;
+    next_table(phys_to_virt(read_cr3()), (*base >> 39) & 0x1ff, 1, 0);
+}
+
 int vmm_protect_user(struct address_space *space, uint64_t virt, uint64_t flags) {
     uint64_t *pte = get_pte(space, virt, 0, 0);
     if (!pte || !(*pte & PTE_PRESENT) || !(*pte & PTE_USER)) return -1;

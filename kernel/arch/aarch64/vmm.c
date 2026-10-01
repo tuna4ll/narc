@@ -142,6 +142,20 @@ int vmm_map_kernel(uint64_t virt, uint64_t phys, uint64_t flags) {
     return map_page(read_ttbr1(), virt, phys, flags, 0);
 }
 
+uint64_t vmm_unmap_kernel(uint64_t virt) {
+    uint64_t *pte = get_pte(read_ttbr1(), virt, 0);
+    if (!pte || !(*pte & DESC_VALID)) return 0;
+    uint64_t phys = *pte & ADDR_MASK;
+    *pte = 0;
+    flush_tlb();
+    return phys;
+}
+
+void vmm_kernel_window(uint64_t *base, uint64_t *size) {
+    *base = 0xffffe00000000000ULL;
+    *size = 1ULL << 39;
+}
+
 int vmm_protect_user(struct address_space *space, uint64_t virt, uint64_t flags) {
     uint64_t *pte = get_pte(space->root, virt, 0);
     if (!pte || !(*pte & DESC_VALID) || !(*pte & DESC_USER)) return -1;

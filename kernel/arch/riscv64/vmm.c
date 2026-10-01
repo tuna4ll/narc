@@ -154,6 +154,23 @@ int vmm_map_kernel(uint64_t virt, uint64_t phys, uint64_t flags) {
     return map_page(root, virt, phys, flags, 0);
 }
 
+uint64_t vmm_unmap_kernel(uint64_t virt) {
+    uint64_t *pte = get_pte((read_satp() & SATP_PPN_MASK) << 12, virt, 0);
+    if (!pte || !(*pte & PTE_V)) return 0;
+    uint64_t phys = pte_phys(*pte);
+    *pte = 0;
+    flush_tlb();
+    return phys;
+}
+
+void vmm_kernel_window(uint64_t *base, uint64_t *size) {
+    unsigned shift = levels() == 4 ? 39 : 30;
+    *base = levels() == 4 ? 0xffffe00000000000ULL : 0xfffffff800000000ULL;
+    *size = 1ULL << shift;
+    uint64_t *root = phys_to_virt((read_satp() & SATP_PPN_MASK) << 12);
+    next_table(root, (*base >> shift) & 0x1ff, 1);
+}
+
 int vmm_protect_user(struct address_space *space, uint64_t virt, uint64_t flags) {
     uint64_t *pte = get_pte(space->root, virt, 0);
     if (!pte || !(*pte & PTE_V) || !(*pte & PTE_U)) return -1;
