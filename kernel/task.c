@@ -1,11 +1,11 @@
 #include <kernel/arch.h>
 #include <kernel/console.h>
+#include <kernel/heap.h>
 #include <kernel/serial.h>
 #include <kernel/string.h>
 #include <kernel/task.h>
 #include <kernel/vfs.h>
 
-#define TASK_MAX 8
 #define TASK_FD_MAX 16
 #define OPEN_MAX 32
 #define PIPE_MAX 4
@@ -27,6 +27,7 @@ struct open_file {
 };
 
 struct task {
+    struct task *next;
     int pid, ppid, state, exit_status, wait_pid;
     uint64_t wait_status;
     struct address_space space;
@@ -36,7 +37,8 @@ struct task {
     int fds[TASK_FD_MAX];
 };
 
-static struct task tasks[TASK_MAX];
+static struct task *task_list;
+static int next_pid = 1;
 static struct open_file files[OPEN_MAX];
 static struct pipe pipes[PIPE_MAX];
 static struct task *current;
@@ -45,13 +47,49 @@ static size_t input_pos, input_count;
 
 extern void task_enter(struct task_frame *frame) __attribute__((noreturn));
 
+static struct task *after(struct task *task) {
+    return task && task->next ? task->next : task_list;
+}
+
 static struct task *next_task(void) {
-    size_t start = current ? (size_t)(current - tasks + 1) : 0;
-    for (size_t n = 0; n < TASK_MAX; n++) {
-        struct task *task = &tasks[(start + n) % TASK_MAX];
+    struct task *start = after(current), *task = start;
+    while (task) {
         if (task->state == TASK_RUNNABLE) return task;
+        task = after(task);
+        if (task == start) break;
     }
     return 0;
+}
+
+static struct task *find_task(int pid) {
+    for (struct task *task = task_list; task; task = task->next)
+        if (task->pid == pid) return task;
+    return 0;
+}
+
+static int alloc_pid(void) {
+    for (;;) {
+        int pid = next_pid;
+        next_pid = next_pid == INT32_MAX ? 1 : next_pid + 1;
+        if (!find_task(pid)) return pid;
+    }
+}
+
+static struct task *task_alloc(void) {
+    struct task *task = kzalloc(sizeof(*task));
+    if (!task) return 0;
+    struct task **link = &task_list;
+    while (*link) link = &(*link)->next;
+    *link = task;
+    task->pid = alloc_pid();
+    return task;
+}
+
+static void task_free(struct task *task) {
+    struct task **link = &task_list;
+    while (*link && *link != task) link = &(*link)->next;
+    if (*link) *link = task->next;
+    kfree(task);
 }
 
 static void switch_to(struct task *next, struct task_frame *frame) {
@@ -99,20 +137,18 @@ static void init_fds(struct task *task) {
 }
 
 struct task *task_create(void) {
-    for (size_t i = 0; i < TASK_MAX; i++) {
-        if (tasks[i].state != TASK_UNUSED) continue;
-        struct task *task = &tasks[i];
-        memset(task, 0, sizeof(*task));
-        if (vmm_space_create(&task->space) != 0) return 0;
-        task->pid = (int)i + 1;
-        task->state = TASK_RUNNABLE;
-        task->mmap_next = USER_MMAP_BASE;
-        arch_task_frame_init(&task->frame);
-        arch_task_state_init(task->arch_state);
-        init_fds(task);
-        return task;
+    struct task *task = task_alloc();
+    if (!task) return 0;
+    if (vmm_space_create(&task->space) != 0) {
+        task_free(task);
+        return 0;
     }
-    return 0;
+    task->state = TASK_RUNNABLE;
+    task->mmap_next = USER_MMAP_BASE;
+    arch_task_frame_init(&task->frame);
+    arch_task_state_init(task->arch_state);
+    init_fds(task);
+    return task;
 }
 
 struct address_space *task_space(struct task *task) {
@@ -144,17 +180,12 @@ void task_preempt(struct task_frame *frame) {
 }
 
 int task_fork(struct task_frame *frame) {
-    struct task *child = 0;
-    for (size_t i = 0; i < TASK_MAX; i++) {
-        if (tasks[i].state == TASK_UNUSED) {
-            child = &tasks[i];
-            break;
-        }
-    }
+    struct task *child = task_alloc();
     if (!child) return -1;
-    memset(child, 0, sizeof(*child));
-    if (vmm_space_clone(&child->space, &current->space) != 0) return -1;
-    child->pid = (int)(child - tasks) + 1;
+    if (vmm_space_clone(&child->space, &current->space) != 0) {
+        task_free(child);
+        return -1;
+    }
     child->ppid = current->pid;
     child->state = TASK_RUNNABLE;
     child->mmap_next = current->mmap_next;
@@ -192,13 +223,13 @@ int task_wait(struct task_frame *frame, int pid, uint64_t status, int options, l
         *result = -1;
         return 0;
     }
-    for (size_t i = 0; i < TASK_MAX; i++) {
-        if (!matches(&tasks[i], current, pid)) continue;
+    for (struct task *child = task_list; child; child = child->next) {
+        if (!matches(child, current, pid)) continue;
         found = 1;
-        if (tasks[i].state != TASK_ZOMBIE) continue;
-        copy_status(current, status, tasks[i].exit_status << 8);
-        *result = tasks[i].pid;
-        memset(&tasks[i], 0, sizeof(tasks[i]));
+        if (child->state != TASK_ZOMBIE) continue;
+        copy_status(current, status, child->exit_status << 8);
+        *result = child->pid;
+        task_free(child);
         return 0;
     }
     if (!found) {
@@ -241,8 +272,7 @@ void task_exit(struct task_frame *frame, int status) {
     close_all(old);
     old->state = TASK_ZOMBIE;
     old->exit_status = status & 0xff;
-    struct task *parent = 0;
-    for (size_t i = 0; i < TASK_MAX; i++) if (tasks[i].pid == old->ppid) parent = &tasks[i];
+    struct task *parent = find_task(old->ppid);
     int reap = 0;
     if (parent && parent->state == TASK_BLOCKED &&
         (parent->wait_pid == -1 || parent->wait_pid == old->pid)) {
@@ -258,7 +288,7 @@ void task_exit(struct task_frame *frame, int status) {
     }
     switch_to(next, frame);
     vmm_space_destroy(&old->space);
-    if (reap) memset(old, 0, sizeof(*old));
+    if (reap) task_free(old);
 }
 
 int task_pid(void) { return current->pid; }
