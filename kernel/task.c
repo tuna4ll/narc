@@ -6,23 +6,22 @@
 #include <kernel/task.h>
 #include <kernel/vfs.h>
 
-#define TASK_FD_MAX 16
-#define OPEN_MAX 32
-#define PIPE_MAX 4
-#define PIPE_SIZE 4096
+#define PIPE_SIZE PAGE_SIZE
 #define USER_MMAP_BASE 0x0000000100000000ULL
 
 enum { TASK_UNUSED, TASK_RUNNABLE, TASK_BLOCKED, TASK_ZOMBIE };
 enum { FD_CONSOLE, FD_VFS, FD_PIPE_R, FD_PIPE_W };
 
 struct pipe {
-    int used;
+    int refs;
     size_t head, count;
-    uint8_t data[PIPE_SIZE];
+    uint64_t page;
+    uint8_t *data;
 };
 
 struct open_file {
-    int refs, type, pipe;
+    int refs, type;
+    struct pipe *pipe;
     struct file file;
 };
 
@@ -34,13 +33,12 @@ struct task {
     struct task_frame frame;
     uint64_t fs_base, mmap_next;
     uint8_t arch_state[ARCH_STATE_SIZE] __attribute__((aligned(16)));
-    int fds[TASK_FD_MAX];
+    struct open_file **fds;
+    int fd_count;
 };
 
 static struct task *task_list;
 static int next_pid = 1;
-static struct open_file files[OPEN_MAX];
-static struct pipe pipes[PIPE_MAX];
 static struct task *current;
 static char input[256];
 static size_t input_pos, input_count;
@@ -104,36 +102,65 @@ static void switch_to(struct task *next, struct task_frame *frame) {
     *frame = current->frame;
 }
 
-static int file_new(int type) {
-    for (int i = 0; i < OPEN_MAX; i++) {
-        if (files[i].refs) continue;
-        memset(&files[i], 0, sizeof(files[i]));
-        files[i].refs = 1;
-        files[i].type = type;
-        return i;
-    }
-    return -1;
+static struct open_file *file_new(int type) {
+    struct open_file *open = kzalloc(sizeof(*open));
+    if (!open) return 0;
+    open->refs = 1;
+    open->type = type;
+    return open;
 }
 
-static void file_put(int index) {
-    if (index < 0 || index >= OPEN_MAX || !files[index].refs) return;
-    if (--files[index].refs) return;
-    if (files[index].type == FD_VFS) vfs_close(&files[index].file);
-    if (files[index].type == FD_PIPE_R || files[index].type == FD_PIPE_W)
-        pipes[files[index].pipe].used--;
-    memset(&files[index], 0, sizeof(files[index]));
+static void pipe_put(struct pipe *pipe) {
+    if (--pipe->refs) return;
+    pmm_free_page(pipe->page);
+    kfree(pipe);
+}
+
+static void file_put(struct open_file *open) {
+    if (!open || --open->refs) return;
+    if (open->type == FD_VFS) vfs_close(&open->file);
+    if (open->pipe) pipe_put(open->pipe);
+    kfree(open);
+}
+
+static int fd_reserve(struct task *task, int fd) {
+    if (fd < task->fd_count) return 0;
+    if (fd == INT32_MAX) return -1;
+    int count = task->fd_count ? task->fd_count : 8;
+    while (count <= fd) count = count > INT32_MAX / 2 ? INT32_MAX : count * 2;
+    struct open_file **fds = krealloc(task->fds, (size_t)count * sizeof(*fds));
+    if (!fds) return -1;
+    memset(fds + task->fd_count, 0, (size_t)(count - task->fd_count) * sizeof(*fds));
+    task->fds = fds;
+    task->fd_count = count;
+    return 0;
+}
+
+static int fd_install(struct task *task, struct open_file *open, int minimum) {
+    int fd = minimum;
+    while (fd < task->fd_count && task->fds[fd]) fd++;
+    if (fd_reserve(task, fd) != 0) return -1;
+    task->fds[fd] = open;
+    return fd;
 }
 
 static void close_all(struct task *task) {
-    for (int fd = 0; fd < TASK_FD_MAX; fd++) {
-        if (task->fds[fd] >= 0) file_put(task->fds[fd]);
-        task->fds[fd] = -1;
-    }
+    for (int fd = 0; fd < task->fd_count; fd++) file_put(task->fds[fd]);
+    kfree(task->fds);
+    task->fds = 0;
+    task->fd_count = 0;
 }
 
-static void init_fds(struct task *task) {
-    for (int i = 0; i < TASK_FD_MAX; i++) task->fds[i] = -1;
-    for (int fd = 0; fd < 3; fd++) task->fds[fd] = file_new(FD_CONSOLE);
+static int init_fds(struct task *task) {
+    for (int fd = 0; fd < 3; fd++) {
+        struct open_file *open = file_new(FD_CONSOLE);
+        if (!open || fd_install(task, open, fd) != fd) {
+            file_put(open);
+            close_all(task);
+            return -1;
+        }
+    }
+    return 0;
 }
 
 struct task *task_create(void) {
@@ -147,7 +174,11 @@ struct task *task_create(void) {
     task->mmap_next = USER_MMAP_BASE;
     arch_task_frame_init(&task->frame);
     arch_task_state_init(task->arch_state);
-    init_fds(task);
+    if (init_fds(task) != 0) {
+        vmm_space_destroy(&task->space);
+        task_free(task);
+        return 0;
+    }
     return task;
 }
 
@@ -186,6 +217,17 @@ int task_fork(struct task_frame *frame) {
         task_free(child);
         return -1;
     }
+    child->fds = kmalloc((size_t)current->fd_count * sizeof(*child->fds));
+    if (!child->fds) {
+        vmm_space_destroy(&child->space);
+        task_free(child);
+        return -1;
+    }
+    child->fd_count = current->fd_count;
+    for (int fd = 0; fd < child->fd_count; fd++) {
+        child->fds[fd] = current->fds[fd];
+        if (child->fds[fd]) child->fds[fd]->refs++;
+    }
     child->ppid = current->pid;
     child->state = TASK_RUNNABLE;
     child->mmap_next = current->mmap_next;
@@ -194,10 +236,6 @@ int task_fork(struct task_frame *frame) {
     arch_syscall_return2(&child->frame, 0, 0);
     arch_task_state_save(current->arch_state);
     memcpy(child->arch_state, current->arch_state, ARCH_STATE_SIZE);
-    for (int fd = 0; fd < TASK_FD_MAX; fd++) {
-        child->fds[fd] = current->fds[fd];
-        if (child->fds[fd] >= 0) files[child->fds[fd]].refs++;
-    }
     return child->pid;
 }
 
@@ -303,26 +341,22 @@ void task_set_fs_base(uint64_t value) {
 void task_set_mmap_next(uint64_t value) { current->mmap_next = value; }
 
 int task_fd_open(const char *path, uint32_t flags, int *status) {
-    int index = file_new(FD_VFS);
-    if (index < 0) return -2;
-    enum vfs_status result = vfs_open(path, flags, &files[index].file);
+    struct open_file *open = file_new(FD_VFS);
+    if (!open) return -2;
+    enum vfs_status result = vfs_open(path, flags, &open->file);
     if (result != VFS_OK) {
-        file_put(index);
+        kfree(open);
         *status = result;
         return -1;
     }
-    for (int fd = 3; fd < TASK_FD_MAX; fd++) {
-        if (current->fds[fd] >= 0) continue;
-        current->fds[fd] = index;
-        return fd;
-    }
-    file_put(index);
-    return -2;
+    int fd = fd_install(current, open, 3);
+    if (fd < 0) file_put(open);
+    return fd < 0 ? -2 : fd;
 }
 
 static struct open_file *fd_get(int fd) {
-    if (fd < 0 || fd >= TASK_FD_MAX || current->fds[fd] < 0) return 0;
-    return &files[current->fds[fd]];
+    if (fd < 0 || fd >= current->fd_count) return 0;
+    return current->fds[fd];
 }
 
 struct file *task_fd_file(int fd) {
@@ -358,7 +392,7 @@ long task_fd_read(int fd, void *buf, size_t len) {
         return (long)done;
     }
     if (open->type != FD_PIPE_R) return -1;
-    struct pipe *pipe = &pipes[open->pipe];
+    struct pipe *pipe = open->pipe;
     size_t done = len < pipe->count ? len : pipe->count;
     for (size_t i = 0; i < done; i++) {
         ((uint8_t *)buf)[i] = pipe->data[pipe->head];
@@ -377,7 +411,7 @@ long task_fd_write(int fd, const void *buf, size_t len) {
     }
     if (open->type == FD_VFS) return vfs_write(&open->file, buf, len);
     if (open->type != FD_PIPE_W) return -1;
-    struct pipe *pipe = &pipes[open->pipe];
+    struct pipe *pipe = open->pipe;
     size_t done = len < PIPE_SIZE - pipe->count ? len : PIPE_SIZE - pipe->count;
     for (size_t i = 0; i < done; i++)
         pipe->data[(pipe->head + pipe->count + i) % PIPE_SIZE] = ((const uint8_t *)buf)[i];
@@ -386,54 +420,55 @@ long task_fd_write(int fd, const void *buf, size_t len) {
 }
 
 int task_fd_close(int fd) {
-    if (!fd_get(fd)) return -1;
-    file_put(current->fds[fd]);
-    current->fds[fd] = -1;
+    struct open_file *open = fd_get(fd);
+    if (!open) return -1;
+    current->fds[fd] = 0;
+    file_put(open);
     return 0;
 }
 
 int task_fd_valid(int fd) { return fd_get(fd) != 0; }
 
 int task_fd_dup(int oldfd, int minimum) {
-    if (!fd_get(oldfd) || minimum < 0) return -1;
-    for (int fd = minimum; fd < TASK_FD_MAX; fd++) {
-        if (current->fds[fd] >= 0) continue;
-        current->fds[fd] = current->fds[oldfd];
-        files[current->fds[fd]].refs++;
-        return fd;
-    }
-    return -1;
+    struct open_file *open = fd_get(oldfd);
+    if (!open || minimum < 0) return -1;
+    int fd = fd_install(current, open, minimum);
+    if (fd >= 0) open->refs++;
+    return fd;
 }
 
 int task_fd_dup2(int oldfd, int newfd) {
-    if (!fd_get(oldfd) || newfd < 0 || newfd >= TASK_FD_MAX) return -1;
+    struct open_file *open = fd_get(oldfd);
+    if (!open || newfd < 0) return -1;
     if (oldfd == newfd) return newfd;
-    if (current->fds[newfd] >= 0) task_fd_close(newfd);
-    current->fds[newfd] = current->fds[oldfd];
-    files[current->fds[newfd]].refs++;
+    if (fd_reserve(current, newfd) != 0) return -1;
+    open->refs++;
+    file_put(current->fds[newfd]);
+    current->fds[newfd] = open;
     return newfd;
 }
 
 int task_fd_pipe(int fds[2]) {
-    int slot = -1, readfd = -1, writefd = -1;
-    for (int i = 0; i < PIPE_MAX; i++) if (!pipes[i].used) { slot = i; break; }
-    for (int fd = 0; fd < TASK_FD_MAX; fd++) if (current->fds[fd] < 0) {
-        if (readfd < 0) readfd = fd;
-        else { writefd = fd; break; }
-    }
-    if (slot < 0 || writefd < 0) return -1;
-    int r = file_new(FD_PIPE_R), w = file_new(FD_PIPE_W);
-    if (r < 0 || w < 0) {
-        if (r >= 0) file_put(r);
-        if (w >= 0) file_put(w);
+    struct pipe *pipe = kzalloc(sizeof(*pipe));
+    struct open_file *r = file_new(FD_PIPE_R), *w = file_new(FD_PIPE_W);
+    if (pipe) pipe->page = pmm_alloc_page();
+    if (!pipe || !pipe->page || !r || !w) {
+        if (pipe && pipe->page) pmm_free_page(pipe->page);
+        kfree(pipe);
+        kfree(r);
+        kfree(w);
         return -1;
     }
-    memset(&pipes[slot], 0, sizeof(pipes[slot]));
-    pipes[slot].used = 2;
-    files[r].pipe = files[w].pipe = slot;
-    current->fds[readfd] = r;
-    current->fds[writefd] = w;
-    fds[0] = readfd;
-    fds[1] = writefd;
+    pipe->data = phys_to_virt(pipe->page);
+    pipe->refs = 2;
+    r->pipe = w->pipe = pipe;
+    fds[0] = fd_install(current, r, 0);
+    fds[1] = fds[0] < 0 ? -1 : fd_install(current, w, 0);
+    if (fds[1] < 0) {
+        if (fds[0] >= 0) current->fds[fds[0]] = 0;
+        file_put(r);
+        file_put(w);
+        return -1;
+    }
     return 0;
 }
