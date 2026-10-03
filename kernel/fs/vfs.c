@@ -1,3 +1,4 @@
+#include <kernel/heap.h>
 #include <kernel/mm.h>
 #include <kernel/string.h>
 #include <kernel/vfs.h>
@@ -5,7 +6,6 @@
 #define TAR_BLOCK 512
 #define S_IFREG 0100000
 #define S_IFDIR 0040000
-#define VFS_NODE_MAX 128
 #define VFS_PAGE_MAX (VFS_FILE_MAX / PAGE_SIZE)
 
 struct tar_header {
@@ -29,14 +29,14 @@ struct tar_header {
 };
 
 struct vnode {
-    int used;
+    struct vnode *parent, *children, *next;
+    char *name;
     int linked;
     uint32_t refs;
     uint64_t size;
     uint64_t ino;
     uint32_t mode;
     uint8_t type;
-    char path[VFS_PATH_MAX];
     const uint8_t *archive;
     uint64_t pages[VFS_PAGE_MAX];
 };
@@ -44,7 +44,7 @@ struct vnode {
 static const uint8_t *tar_data;
 static uint64_t tar_size;
 static uint64_t next_inode;
-static struct vnode nodes[VFS_NODE_MAX];
+static struct vnode *root;
 
 static size_t str_len(const char *string) {
     size_t length = 0;
@@ -52,20 +52,15 @@ static size_t str_len(const char *string) {
     return length;
 }
 
-static int str_eq(const char *left, const char *right) {
-    while (*left && *left == *right) {
-        left++;
-        right++;
-    }
-    return *left == *right;
+static int name_eq(const char *name, const char *component, size_t length) {
+    for (size_t i = 0; i < length; i++)
+        if (name[i] != component[i]) return 0;
+    return !name[length];
 }
 
-static int str_prefix(const char *string, const char *prefix) {
-    while (*prefix && *string == *prefix) {
-        string++;
-        prefix++;
-    }
-    return !*prefix;
+static int dot_name(const char *component, size_t length) {
+    return (length == 1 && component[0] == '.') ||
+           (length == 2 && component[0] == '.' && component[1] == '.');
 }
 
 static uint64_t octal(const char *string, size_t length) {
@@ -98,80 +93,63 @@ static int header_at(uint64_t offset, const struct tar_header **header) {
     return 1;
 }
 
-static int make_path(const struct tar_header *header, char *output) {
-    char raw[VFS_PATH_MAX];
+static size_t tar_path(const struct tar_header *header, char *output) {
     size_t length = 0;
-    if (header->prefix[0]) {
-        while (length < sizeof(header->prefix) && header->prefix[length] &&
-               length + 1 < sizeof(raw)) {
-            raw[length] = header->prefix[length];
-            length++;
-        }
-        if (length + 1 >= sizeof(raw)) return -1;
-        raw[length++] = '/';
-    }
-    for (size_t i = 0; i < sizeof(header->name) && header->name[i]; i++) {
-        if (length + 1 >= sizeof(raw)) return -1;
-        raw[length++] = header->name[i];
-    }
-    raw[length] = 0;
-
-    const char *source = raw;
-    while (source[0] == '.' && source[1] == '/') source += 2;
-    while (*source == '/') source++;
-    output[0] = '/';
-    length = 1;
-    while (*source && length + 1 < VFS_PATH_MAX) output[length++] = *source++;
-    if (*source) return -1;
-    while (length > 1 && output[length - 1] == '/') length--;
+    for (size_t i = 0; i < sizeof(header->prefix) && header->prefix[i]; i++)
+        output[length++] = header->prefix[i];
+    if (length) output[length++] = '/';
+    for (size_t i = 0; i < sizeof(header->name) && header->name[i]; i++)
+        output[length++] = header->name[i];
     output[length] = 0;
+    return length;
+}
+
+static struct vnode *child_named(struct vnode *directory, const char *name, size_t length) {
+    for (struct vnode *child = directory->children; child; child = child->next)
+        if (name_eq(child->name, name, length)) return child;
     return 0;
 }
 
-static int normalize(const char *path, char *output) {
-    if (!path || *path != '/') return -1;
-    size_t length = 1;
-    output[0] = '/';
-    while (*path) {
-        while (*path == '/') path++;
-        if (!*path) break;
-        const char *component = path;
-        while (*path && *path != '/') path++;
-        size_t component_length = (size_t)(path - component);
-        if (component_length == 1 && component[0] == '.') continue;
-        if (component_length == 2 && component[0] == '.' && component[1] == '.') {
-            while (length > 1 && output[length - 1] != '/') length--;
-            if (length > 1) length--;
-            continue;
-        }
-        if (component_length >= VFS_NAME_MAX ||
-            component_length + length + (length > 1) >= VFS_PATH_MAX)
-            return -1;
-        if (length > 1) output[length++] = '/';
-        memcpy(output + length, component, component_length);
-        length += component_length;
+static void attach(struct vnode *directory, struct vnode *node) {
+    struct vnode **link = &directory->children;
+    while (*link) link = &(*link)->next;
+    node->next = 0;
+    node->parent = directory;
+    node->linked = 1;
+    *link = node;
+}
+
+static void detach(struct vnode *node) {
+    struct vnode **link = &node->parent->children;
+    while (*link != node) link = &(*link)->next;
+    *link = node->next;
+    node->next = 0;
+    node->parent = 0;
+    node->linked = 0;
+}
+
+static char *copy_name(const char *name, size_t length) {
+    char *copy = kmalloc(length + 1);
+    if (!copy) return 0;
+    memcpy(copy, name, length);
+    copy[length] = 0;
+    return copy;
+}
+
+static struct vnode *new_node(struct vnode *directory, const char *name, size_t length,
+                              uint8_t type, uint32_t mode) {
+    struct vnode *node = kzalloc(sizeof(*node));
+    if (!node) return 0;
+    node->name = copy_name(name, length);
+    if (!node->name) {
+        kfree(node);
+        return 0;
     }
-    output[length] = 0;
-    return 0;
-}
-
-static struct vnode *find_node(const char *path) {
-    for (size_t i = 0; i < VFS_NODE_MAX; i++)
-        if (nodes[i].used && nodes[i].linked && str_eq(nodes[i].path, path))
-            return &nodes[i];
-    return 0;
-}
-
-static struct vnode *new_node(void) {
-    for (size_t i = 0; i < VFS_NODE_MAX; i++) {
-        if (nodes[i].used) continue;
-        memset(&nodes[i], 0, sizeof(nodes[i]));
-        nodes[i].used = 1;
-        nodes[i].linked = 1;
-        nodes[i].ino = next_inode++;
-        return &nodes[i];
-    }
-    return 0;
+    node->ino = next_inode++;
+    node->type = type;
+    node->mode = mode;
+    attach(directory, node);
+    return node;
 }
 
 static void release_pages(struct vnode *node) {
@@ -183,29 +161,55 @@ static void release_pages(struct vnode *node) {
 
 static void release_node(struct vnode *node) {
     release_pages(node);
-    memset(node, 0, sizeof(*node));
+    kfree(node->name);
+    kfree(node);
 }
 
-static int parent_path(const char *path, char *parent) {
-    size_t length = str_len(path);
-    if (length <= 1) return -1;
-    while (length > 1 && path[length - 1] != '/') length--;
-    if (length == 1) {
-        parent[0] = '/';
-        parent[1] = 0;
-        return 0;
+static void remove_node(struct vnode *node) {
+    detach(node);
+    if (!node->refs) release_node(node);
+}
+
+static enum vfs_status walk(const char *path, size_t length, struct vnode **result) {
+    if (!path || !length || path[0] != '/') return VFS_INVALID;
+    struct vnode *node = root;
+    size_t i = 0;
+    while (i < length) {
+        while (i < length && path[i] == '/') i++;
+        size_t start = i;
+        while (i < length && path[i] != '/') i++;
+        if (i == start) break;
+        if (node->type != VFS_DIR) return VFS_NOT_DIRECTORY;
+        if (dot_name(path + start, i - start)) {
+            if (i - start == 2 && node->parent) node = node->parent;
+            continue;
+        }
+        node = child_named(node, path + start, i - start);
+        if (!node) return VFS_NOT_FOUND;
     }
-    memcpy(parent, path, length - 1);
-    parent[length - 1] = 0;
-    return 0;
+    *result = node;
+    return VFS_OK;
 }
 
-static enum vfs_status validate_parent(const char *path) {
-    char parent[VFS_PATH_MAX];
-    if (parent_path(path, parent) != 0) return VFS_INVALID;
-    struct vnode *node = find_node(parent);
-    if (!node) return VFS_NOT_FOUND;
-    return node->type == VFS_DIR ? VFS_OK : VFS_NOT_DIRECTORY;
+static enum vfs_status lookup(const char *path, struct vnode **result) {
+    return walk(path, path ? str_len(path) : 0, result);
+}
+
+static enum vfs_status lookup_parent(const char *path, struct vnode **parent,
+                                     const char **name, size_t *length) {
+    if (!path || path[0] != '/') return VFS_INVALID;
+    size_t end = str_len(path);
+    while (end && path[end - 1] == '/') end--;
+    size_t start = end;
+    while (start && path[start - 1] != '/') start--;
+    if (start == end || dot_name(path + start, end - start)) return VFS_INVALID;
+    if (end - start >= VFS_NAME_MAX) return VFS_INVALID;
+    enum vfs_status status = walk(path, start, parent);
+    if (status != VFS_OK) return status;
+    if ((*parent)->type != VFS_DIR) return VFS_NOT_DIRECTORY;
+    *name = path + start;
+    *length = end - start;
+    return VFS_OK;
 }
 
 static int ensure_pages(struct vnode *node, uint64_t end) {
@@ -228,9 +232,32 @@ static int ensure_pages(struct vnode *node, uint64_t end) {
     return 0;
 }
 
-static void copy_path(char *destination, const char *source) {
-    size_t length = str_len(source);
-    memcpy(destination, source, length + 1);
+static struct vnode *tar_node(const char *path, uint8_t type, uint32_t mode) {
+    struct vnode *node = root;
+    const char *cursor = path;
+    for (;;) {
+        while (*cursor == '/') cursor++;
+        const char *start = cursor;
+        while (*cursor && *cursor != '/') cursor++;
+        size_t length = (size_t)(cursor - start);
+        if (!length) return node;
+        while (*cursor == '/') cursor++;
+        int last = !*cursor;
+        if (length == 1 && start[0] == '.') {
+            if (last) return node;
+            continue;
+        }
+        if (dot_name(start, length) || length >= VFS_NAME_MAX || node->type != VFS_DIR) return 0;
+        struct vnode *child = child_named(node, start, length);
+        if (!child) child = new_node(node, start, length, last ? type : VFS_DIR,
+                                     last ? mode : (S_IFDIR | 0755));
+        if (!child || (last && child->type != type)) return 0;
+        if (last) {
+            child->mode = mode;
+            return child;
+        }
+        node = child;
+    }
 }
 
 int vfs_init(const void *archive, uint64_t size) {
@@ -238,48 +265,46 @@ int vfs_init(const void *archive, uint64_t size) {
     tar_data = archive;
     tar_size = size;
     next_inode = 2;
-    memset(nodes, 0, sizeof(nodes));
-
-    struct vnode *root = new_node();
-    if (!root) return -1;
+    root = kzalloc(sizeof(*root));
+    if (!root || !(root->name = copy_name("", 0))) return -1;
     root->ino = 1;
     root->type = VFS_DIR;
     root->mode = S_IFDIR | 0755;
-    copy_path(root->path, "/");
+    root->linked = 1;
 
     const struct tar_header *header;
     for (uint64_t offset = 0; header_at(offset, &header); offset = next_offset(offset, header)) {
         if (header->magic[0] != 'u' || header->magic[1] != 's' || header->magic[2] != 't' ||
             header->magic[3] != 'a' || header->magic[4] != 'r') return -1;
-        char path[VFS_PATH_MAX];
-        if (make_path(header, path) != 0) return -1;
-        if (str_eq(path, "/")) continue;
-        struct vnode *node = new_node();
-        if (!node) return -1;
-        node->type = header->type == '5' ? VFS_DIR : VFS_REG;
-        node->mode = (node->type == VFS_DIR ? S_IFDIR : S_IFREG) |
-                     (uint32_t)(octal(header->mode, sizeof(header->mode)) & 0777);
-        node->size = node->type == VFS_REG ? octal(header->size, sizeof(header->size)) : 0;
+        char path[sizeof(header->prefix) + sizeof(header->name) + 2];
+        tar_path(header, path);
+        uint8_t type = header->type == '5' ? VFS_DIR : VFS_REG;
+        uint32_t mode = (type == VFS_DIR ? S_IFDIR : S_IFREG) |
+                        (uint32_t)(octal(header->mode, sizeof(header->mode)) & 0777);
+        struct vnode *node = tar_node(path, type, mode);
+        if (!node || node->type != type) return -1;
+        if (type != VFS_REG) continue;
+        node->size = octal(header->size, sizeof(header->size));
         if (node->size > VFS_FILE_MAX) return -1;
-        node->archive = node->type == VFS_REG ? (const uint8_t *)header + TAR_BLOCK : 0;
-        copy_path(node->path, path);
+        node->archive = (const uint8_t *)header + TAR_BLOCK;
     }
     return 0;
 }
 
 enum vfs_status vfs_open(const char *path, uint32_t flags, struct file *file) {
-    char normalized[VFS_PATH_MAX];
-    if (!file || normalize(path, normalized) != 0) return VFS_INVALID;
-    struct vnode *node = find_node(normalized);
-    if (!node && !(flags & VFS_OPEN_CREATE)) return VFS_NOT_FOUND;
-    if (!node) {
-        enum vfs_status status = validate_parent(normalized);
+    if (!file) return VFS_INVALID;
+    struct vnode *node;
+    enum vfs_status status = lookup(path, &node);
+    if (status == VFS_NOT_FOUND && (flags & VFS_OPEN_CREATE)) {
+        struct vnode *parent;
+        const char *name;
+        size_t length;
+        status = lookup_parent(path, &parent, &name, &length);
         if (status != VFS_OK) return status;
-        node = new_node();
+        node = new_node(parent, name, length, VFS_REG, S_IFREG | 0666);
         if (!node) return VFS_NO_SPACE;
-        node->type = VFS_REG;
-        node->mode = S_IFREG | 0666;
-        copy_path(node->path, normalized);
+    } else if (status != VFS_OK) {
+        return status;
     } else if ((flags & VFS_OPEN_CREATE) && (flags & VFS_OPEN_EXCLUSIVE)) {
         return VFS_EXISTS;
     }
@@ -371,120 +396,72 @@ long vfs_seek(struct file *file, int64_t offset, int origin) {
     return (long)next;
 }
 
-static int direct_child(const char *directory, const char *path, const char **name) {
-    if (str_eq(directory, "/")) {
-        if (path[0] != '/' || !path[1]) return 0;
-        *name = path + 1;
-    } else {
-        size_t length = str_len(directory);
-        if (!str_prefix(path, directory) || path[length] != '/') return 0;
-        *name = path + length + 1;
-    }
-    for (const char *cursor = *name; *cursor; cursor++)
-        if (*cursor == '/') return 0;
-    return **name != 0;
-}
-
 int vfs_readdir(struct file *file, struct vfs_dirent *entry) {
     if (!file || !file->node || !entry || file->node->type != VFS_DIR) return -1;
-    while (file->offset < VFS_NODE_MAX) {
-        struct vnode *node = &nodes[file->offset++];
-        const char *name;
-        if (!node->used || !node->linked || !direct_child(file->node->path, node->path, &name))
-            continue;
-        entry->ino = node->ino;
-        entry->type = node->type;
-        copy_path(entry->name, name);
-        return 1;
-    }
-    return 0;
-}
-
-enum vfs_status vfs_mkdir(const char *path, uint32_t mode) {
-    char normalized[VFS_PATH_MAX];
-    if (normalize(path, normalized) != 0 || str_eq(normalized, "/")) return VFS_INVALID;
-    if (find_node(normalized)) return VFS_EXISTS;
-    enum vfs_status status = validate_parent(normalized);
-    if (status != VFS_OK) return status;
-    struct vnode *node = new_node();
-    if (!node) return VFS_NO_SPACE;
-    node->type = VFS_DIR;
-    node->mode = S_IFDIR | (mode & 0777);
-    copy_path(node->path, normalized);
-    return VFS_OK;
-}
-
-static int directory_empty(const struct vnode *directory) {
-    for (size_t i = 0; i < VFS_NODE_MAX; i++) {
-        const char *name;
-        if (nodes[i].used && nodes[i].linked &&
-            direct_child(directory->path, nodes[i].path, &name))
-            return 0;
-    }
+    struct vnode *child = file->node->children;
+    for (uint64_t i = 0; child && i < file->offset; i++) child = child->next;
+    if (!child) return 0;
+    file->offset++;
+    entry->ino = child->ino;
+    entry->type = child->type;
+    memcpy(entry->name, child->name, str_len(child->name) + 1);
     return 1;
 }
 
+enum vfs_status vfs_mkdir(const char *path, uint32_t mode) {
+    struct vnode *parent;
+    const char *name;
+    size_t length;
+    enum vfs_status status = lookup_parent(path, &parent, &name, &length);
+    if (status != VFS_OK) return status;
+    if (child_named(parent, name, length)) return VFS_EXISTS;
+    if (!new_node(parent, name, length, VFS_DIR, S_IFDIR | (mode & 0777))) return VFS_NO_SPACE;
+    return VFS_OK;
+}
+
 enum vfs_status vfs_unlink(const char *path, int remove_directory) {
-    char normalized[VFS_PATH_MAX];
-    if (normalize(path, normalized) != 0 || str_eq(normalized, "/")) return VFS_INVALID;
-    struct vnode *node = find_node(normalized);
+    struct vnode *parent;
+    const char *name;
+    size_t length;
+    enum vfs_status status = lookup_parent(path, &parent, &name, &length);
+    if (status != VFS_OK) return status;
+    struct vnode *node = child_named(parent, name, length);
     if (!node) return VFS_NOT_FOUND;
     if (remove_directory && node->type != VFS_DIR) return VFS_NOT_DIRECTORY;
     if (!remove_directory && node->type == VFS_DIR) return VFS_IS_DIRECTORY;
-    if (node->type == VFS_DIR && !directory_empty(node)) return VFS_NOT_EMPTY;
-    node->linked = 0;
-    if (!node->refs) release_node(node);
+    if (node->children) return VFS_NOT_EMPTY;
+    remove_node(node);
     return VFS_OK;
 }
 
 enum vfs_status vfs_rename(const char *old_path, const char *new_path) {
-    char old_normalized[VFS_PATH_MAX], new_normalized[VFS_PATH_MAX];
-    if (normalize(old_path, old_normalized) != 0 ||
-        normalize(new_path, new_normalized) != 0 || str_eq(old_normalized, "/") ||
-        str_eq(new_normalized, "/"))
-        return VFS_INVALID;
-    struct vnode *node = find_node(old_normalized);
-    if (!node) return VFS_NOT_FOUND;
-    if (str_eq(old_normalized, new_normalized)) return VFS_OK;
-    size_t old_length = str_len(old_normalized);
-    if (node->type == VFS_DIR && str_prefix(new_normalized, old_normalized) &&
-        new_normalized[old_length] == '/')
-        return VFS_INVALID;
-    enum vfs_status status = validate_parent(new_normalized);
+    struct vnode *old_parent, *new_parent;
+    const char *old_name, *new_name;
+    size_t old_length, new_length;
+    enum vfs_status status = lookup_parent(old_path, &old_parent, &old_name, &old_length);
     if (status != VFS_OK) return status;
+    struct vnode *node = child_named(old_parent, old_name, old_length);
+    if (!node) return VFS_NOT_FOUND;
+    status = lookup_parent(new_path, &new_parent, &new_name, &new_length);
+    if (status != VFS_OK) return status;
+    for (struct vnode *ancestor = new_parent; ancestor; ancestor = ancestor->parent)
+        if (ancestor == node) return VFS_INVALID;
 
-    struct vnode *target = find_node(new_normalized);
+    struct vnode *target = child_named(new_parent, new_name, new_length);
+    if (target == node) return VFS_OK;
     if (target) {
         if (node->type == VFS_DIR && target->type != VFS_DIR)
             return VFS_NOT_DIRECTORY;
         if (node->type != VFS_DIR && target->type == VFS_DIR)
             return VFS_IS_DIRECTORY;
-        if (target->type == VFS_DIR && !directory_empty(target))
-            return VFS_NOT_EMPTY;
+        if (target->children) return VFS_NOT_EMPTY;
     }
-
-    size_t new_length = str_len(new_normalized);
-    for (size_t i = 0; i < VFS_NODE_MAX; i++) {
-        if (!nodes[i].used || !nodes[i].linked) continue;
-        if (!str_eq(nodes[i].path, old_normalized) &&
-            !(str_prefix(nodes[i].path, old_normalized) && nodes[i].path[old_length] == '/'))
-            continue;
-        size_t suffix = str_len(nodes[i].path + old_length);
-        if (new_length + suffix >= VFS_PATH_MAX) return VFS_INVALID;
-    }
-    if (target) {
-        target->linked = 0;
-        if (!target->refs) release_node(target);
-    }
-    for (size_t i = 0; i < VFS_NODE_MAX; i++) {
-        if (!nodes[i].used || !nodes[i].linked) continue;
-        if (!str_eq(nodes[i].path, old_normalized) &&
-            !(str_prefix(nodes[i].path, old_normalized) && nodes[i].path[old_length] == '/'))
-            continue;
-        char renamed[VFS_PATH_MAX];
-        memcpy(renamed, new_normalized, new_length);
-        copy_path(renamed + new_length, nodes[i].path + old_length);
-        copy_path(nodes[i].path, renamed);
-    }
+    char *name = copy_name(new_name, new_length);
+    if (!name) return VFS_NO_SPACE;
+    if (target) remove_node(target);
+    detach(node);
+    kfree(node->name);
+    node->name = name;
+    attach(new_parent, node);
     return VFS_OK;
 }
