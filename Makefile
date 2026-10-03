@@ -66,7 +66,8 @@ endif
 CFLAGS := $(COMMON_CFLAGS) $(KERNEL_CFLAGS)
 ASFLAGS := -ffreestanding -fno-pic -fno-pie $(KERNEL_ASFLAGS)
 USER_CFLAGS := $(COMMON_USER_CFLAGS) $(USER_ARCH_FLAGS) $(USER_LINK_FLAGS) \
-               --sysroot=$(abspath $(SYSROOT))
+               --sysroot=$(abspath $(SYSROOT)) -nostdinc \
+               -isystem $(SYSROOT_INCLUDE) -isystem $(shell $(USER_CC) -print-file-name=include)
 USER_LDFLAGS := $(COMMON_USER_LDFLAGS) $(USER_LINK_FLAGS)
 LINKER := kernel/arch/$(ARCH)/linker.ld
 LIBNARC_COMMON_C := $(shell find lib/libnarc/src -name '*.c' | sort)
