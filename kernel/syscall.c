@@ -1,3 +1,4 @@
+#include <kernel/heap.h>
 #include <kernel/mm.h>
 #include <kernel/syscall.h>
 #include <kernel/task.h>
@@ -48,12 +49,17 @@ static int copy_to_user(uint64_t dst, const void *src, size_t len) {
     return uaccess_write(space, dst, src, len);
 }
 
-static int copy_string(char *dst, uint64_t src, size_t capacity) {
-    for (size_t i = 0; i < capacity; i++) {
-        if (copy_from_user(&dst[i], src + i, 1) != 0) return -1;
-        if (!dst[i]) return 0;
+static char *copy_user_string(uint64_t address) {
+    struct address_space *space = vmm_space_current();
+    long length = uaccess_strlen(space, address);
+    if (length < 0) return 0;
+    char *string = kmalloc((size_t)length + 1);
+    if (!string) return 0;
+    if (uaccess_read(space, string, address, (size_t)length + 1) != 0) {
+        kfree(string);
+        return 0;
     }
-    return -1;
+    return string;
 }
 
 static uint32_t copy_path(char path[VFS_PATH_MAX], uint64_t address, uint64_t length) {
@@ -63,26 +69,6 @@ static uint32_t copy_path(char path[VFS_PATH_MAX], uint64_t address, uint64_t le
         if (!path[i]) return NARC_INVALID_ARGUMENT;
     path[length] = 0;
     return NARC_OK;
-}
-
-static int copy_string_list(uint64_t address, char storage[16][VFS_PATH_MAX],
-                            const char *values[16], size_t *count) {
-    *count = 0;
-    if (!address) return 0;
-    while (*count < 16) {
-        uint64_t item;
-        if (copy_from_user(&item, address + *count * sizeof(item), sizeof(item)) != 0)
-            return -1;
-        if (!item) return 0;
-        if (copy_string(storage[*count], item, VFS_PATH_MAX) != 0) return -1;
-        values[*count] = storage[*count];
-        (*count)++;
-    }
-    uint64_t terminator;
-    if (copy_from_user(&terminator, address + *count * sizeof(terminator),
-                       sizeof(terminator)) != 0)
-        return -1;
-    return terminator ? -1 : 0;
 }
 
 static struct kernel_result handle_read(uint64_t fd, uint64_t buffer, uint64_t length) {
@@ -303,23 +289,11 @@ static struct kernel_result handle_unmap(uint64_t address, uint64_t length) {
 
 static uint32_t handle_exec(struct task_frame *frame, uint64_t path_address,
                             uint64_t argv_address, uint64_t envp_address) {
-    char path[VFS_PATH_MAX];
-    char argument_storage[16][VFS_PATH_MAX];
-    char environment_storage[16][VFS_PATH_MAX];
-    const char *arguments[16];
-    const char *environment[16];
-    size_t argument_count, environment_count;
-    if (copy_string(path, path_address, sizeof(path)) != 0 ||
-        copy_string_list(argv_address, argument_storage, arguments, &argument_count) != 0 ||
-        copy_string_list(envp_address, environment_storage, environment,
-                         &environment_count) != 0)
-        return NARC_BAD_ADDRESS;
-    if (!argument_count) {
-        arguments[0] = path;
-        argument_count = 1;
-    }
-    return user_exec(frame, path, arguments, argument_count,
-                     environment, environment_count) == 0 ? NARC_OK : NARC_NOT_FOUND;
+    char *path = copy_user_string(path_address);
+    if (!path) return NARC_BAD_ADDRESS;
+    int status = user_exec(frame, path, argv_address, envp_address);
+    kfree(path);
+    return status == 0 ? NARC_OK : NARC_NOT_FOUND;
 }
 
 static void return_result(struct task_frame *frame, struct kernel_result result) {
