@@ -4,6 +4,7 @@
 #include <kernel/serial.h>
 #include <kernel/string.h>
 #include <kernel/task.h>
+#include <kernel/uaccess.h>
 #include <kernel/vfs.h>
 
 #define PIPE_SIZE PAGE_SIZE
@@ -242,13 +243,7 @@ int task_fork(struct task_frame *frame) {
 static int copy_status(struct task *task, uint64_t dst, int status) {
     if (!dst) return 0;
     if (!vmm_user_range_ok(&task->space, dst, sizeof(status), 1)) return -1;
-    const uint8_t *src = (const uint8_t *)&status;
-    for (size_t i = 0; i < sizeof(status); i++) {
-        uint64_t phys = vmm_user_phys(&task->space, dst + i);
-        if (!phys) return -1;
-        *(uint8_t *)phys_to_virt(phys) = src[i];
-    }
-    return 0;
+    return uaccess_write(&task->space, dst, &status, sizeof(status));
 }
 
 static int matches(struct task *child, struct task *parent, int pid) {

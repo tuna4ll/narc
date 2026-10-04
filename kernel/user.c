@@ -3,6 +3,7 @@
 #include <kernel/mm.h>
 #include <kernel/string.h>
 #include <kernel/task.h>
+#include <kernel/uaccess.h>
 #include <kernel/user.h>
 #include <kernel/vfs.h>
 #include <stddef.h>
@@ -43,34 +44,6 @@ struct __attribute__((packed)) elf64_phdr {
 static uint64_t align_down(uint64_t x) { return x & ~(PAGE_SIZE - 1); }
 static uint64_t align_up(uint64_t x) { return (x + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1); }
 
-static int copy_out(struct address_space *space, uint64_t dst, const void *src, size_t len) {
-    const uint8_t *s = src;
-    while (len) {
-        uint64_t phys = vmm_user_phys(space, dst);
-        if (!phys) return -1;
-        size_t chunk = PAGE_SIZE - (size_t)(dst & (PAGE_SIZE - 1));
-        if (chunk > len) chunk = len;
-        memcpy(phys_to_virt(phys), s, chunk);
-        dst += chunk;
-        s += chunk;
-        len -= chunk;
-    }
-    return 0;
-}
-
-static int zero_out(struct address_space *space, uint64_t dst, size_t len) {
-    while (len) {
-        uint64_t phys = vmm_user_phys(space, dst);
-        if (!phys) return -1;
-        size_t chunk = PAGE_SIZE - (size_t)(dst & (PAGE_SIZE - 1));
-        if (chunk > len) chunk = len;
-        memset(phys_to_virt(phys), 0, chunk);
-        dst += chunk;
-        len -= chunk;
-    }
-    return 0;
-}
-
 static int map_range(struct address_space *space, uint64_t start, uint64_t end) {
     for (uint64_t va = align_down(start); va < align_up(end); va += PAGE_SIZE) {
         if (vmm_user_phys(space, va)) continue;
@@ -99,7 +72,7 @@ static int put_stack(struct address_space *space, uint64_t *sp,
                      const void *src, size_t len, uint64_t *address) {
     if (*sp < USER_STACK_TOP - USER_STACK_SIZE + len) return -1;
     *sp -= len;
-    if (copy_out(space, *sp, src, len) != 0) return -1;
+    if (uaccess_write(space, *sp, src, len) != 0) return -1;
     *address = *sp;
     return 0;
 }
@@ -143,7 +116,7 @@ static int build_stack(struct address_space *space, const struct elf64_ehdr *eh,
     words[n++] = AT_EXECFN; words[n++] = argp[0];
     words[n++] = AT_NULL; words[n++] = 0;
     sp = (sp - n * sizeof(uint64_t)) & ~0xfULL;
-    if (copy_out(space, sp, words, n * sizeof(uint64_t)) != 0) return -1;
+    if (uaccess_write(space, sp, words, n * sizeof(uint64_t)) != 0) return -1;
     *result = sp;
     return 0;
 }
@@ -186,8 +159,8 @@ static int load(struct address_space *space, const char *path, const char *const
             return -1;
         if (!ph[i].memsz) continue;
         if (map_range(space, ph[i].vaddr, ph[i].vaddr + ph[i].memsz) != 0 ||
-            copy_out(space, ph[i].vaddr, blob + ph[i].offset, (size_t)ph[i].filesz) != 0 ||
-            zero_out(space, ph[i].vaddr + ph[i].filesz,
+            uaccess_write(space, ph[i].vaddr, blob + ph[i].offset, (size_t)ph[i].filesz) != 0 ||
+            uaccess_zero(space, ph[i].vaddr + ph[i].filesz,
                      (size_t)(ph[i].memsz - ph[i].filesz)) != 0) return -1;
     }
     for (uint16_t i = 0; i < eh->phnum; i++) {

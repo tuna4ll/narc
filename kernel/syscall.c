@@ -1,6 +1,7 @@
 #include <kernel/mm.h>
 #include <kernel/syscall.h>
 #include <kernel/task.h>
+#include <kernel/uaccess.h>
 #include <kernel/user.h>
 #include <kernel/vfs.h>
 #include <narc/abi.h>
@@ -36,41 +37,15 @@ static uint32_t vfs_error(enum vfs_status status) {
 }
 
 static int copy_from_user(void *dst, uint64_t src, size_t len) {
-    uint8_t *out = dst;
     struct address_space *space = vmm_space_current();
     if (!vmm_user_range_ok(space, src, len, 0)) return -1;
-
-    while (len) {
-        uint64_t phys = vmm_user_phys(space, src);
-        if (!phys) return -1;
-        size_t chunk = PAGE_SIZE - (size_t)(src & (PAGE_SIZE - 1));
-        if (chunk > len) chunk = len;
-        const uint8_t *in = phys_to_virt(phys);
-        for (size_t i = 0; i < chunk; i++) out[i] = in[i];
-        src += chunk;
-        out += chunk;
-        len -= chunk;
-    }
-    return 0;
+    return uaccess_read(space, dst, src, len);
 }
 
 static int copy_to_user(uint64_t dst, const void *src, size_t len) {
-    const uint8_t *in = src;
     struct address_space *space = vmm_space_current();
     if (!vmm_user_range_ok(space, dst, len, 1)) return -1;
-
-    while (len) {
-        uint64_t phys = vmm_user_phys(space, dst);
-        if (!phys) return -1;
-        size_t chunk = PAGE_SIZE - (size_t)(dst & (PAGE_SIZE - 1));
-        if (chunk > len) chunk = len;
-        uint8_t *out = phys_to_virt(phys);
-        for (size_t i = 0; i < chunk; i++) out[i] = in[i];
-        dst += chunk;
-        in += chunk;
-        len -= chunk;
-    }
-    return 0;
+    return uaccess_write(space, dst, src, len);
 }
 
 static int copy_string(char *dst, uint64_t src, size_t capacity) {
