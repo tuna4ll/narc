@@ -62,12 +62,23 @@ static char *copy_user_string(uint64_t address) {
     return string;
 }
 
-static uint32_t copy_path(char path[VFS_PATH_MAX], uint64_t address, uint64_t length) {
-    if (!length || length >= VFS_PATH_MAX) return NARC_INVALID_ARGUMENT;
-    if (copy_from_user(path, address, (size_t)length) != 0) return NARC_BAD_ADDRESS;
-    for (uint64_t i = 0; i < length; i++)
-        if (!path[i]) return NARC_INVALID_ARGUMENT;
-    path[length] = 0;
+static uint32_t copy_path(char **path, uint64_t address, uint64_t length) {
+    *path = 0;
+    if (!length || length >= SIZE_MAX) return NARC_INVALID_ARGUMENT;
+    if (!vmm_user_range_ok(vmm_space_current(), address, length, 0)) return NARC_BAD_ADDRESS;
+    char *copy = kmalloc((size_t)length + 1);
+    if (!copy) return NARC_NO_MEMORY;
+    if (copy_from_user(copy, address, (size_t)length) != 0) {
+        kfree(copy);
+        return NARC_BAD_ADDRESS;
+    }
+    for (uint64_t i = 0; i < length; i++) {
+        if (copy[i]) continue;
+        kfree(copy);
+        return NARC_INVALID_ARGUMENT;
+    }
+    copy[length] = 0;
+    *path = copy;
     return NARC_OK;
 }
 
@@ -123,15 +134,18 @@ static struct kernel_result handle_open(uint64_t address, uint64_t length, uint6
                            NARC_OPEN_CREATE | NARC_OPEN_DIRECTORY |
                            NARC_OPEN_TRUNCATE | NARC_OPEN_EXCLUSIVE |
                            NARC_OPEN_APPEND;
-    if (!length || length >= VFS_PATH_MAX || (flags & ~known) ||
+    if (!length || (flags & ~known) ||
         !(flags & (NARC_OPEN_READ | NARC_OPEN_WRITE)) ||
         ((flags & NARC_OPEN_TRUNCATE) && !(flags & NARC_OPEN_WRITE)))
         return result_error(NARC_INVALID_ARGUMENT);
 
-    char path[VFS_PATH_MAX];
-    uint32_t path_status = copy_path(path, address, length);
+    char *path;
+    uint32_t path_status = copy_path(&path, address, length);
     if (path_status != NARC_OK) return result_error(path_status);
-    if (path[0] != '/') return result_error(NARC_NOT_FOUND);
+    if (path[0] != '/') {
+        kfree(path);
+        return result_error(NARC_NOT_FOUND);
+    }
 
     uint32_t native_flags = 0;
     if (flags & NARC_OPEN_READ) native_flags |= VFS_OPEN_READ;
@@ -143,36 +157,44 @@ static struct kernel_result handle_open(uint64_t address, uint64_t length, uint6
     if (flags & NARC_OPEN_APPEND) native_flags |= VFS_OPEN_APPEND;
     int status;
     int fd = task_fd_open(path, native_flags, &status);
+    kfree(path);
     if (fd == -2) return result_error(NARC_NO_MEMORY);
     if (fd < 0) return result_error(vfs_error(status));
     return result_ok((uint64_t)fd);
 }
 
 static struct kernel_result handle_mkdir(uint64_t address, uint64_t length, uint64_t mode) {
-    char path[VFS_PATH_MAX];
-    uint32_t status = copy_path(path, address, length);
+    char *path;
+    uint32_t status = copy_path(&path, address, length);
     if (status != NARC_OK) return result_error(status);
     enum vfs_status result = vfs_mkdir(path, (uint32_t)mode);
+    kfree(path);
     return result == VFS_OK ? result_ok(0) : result_error(vfs_error(result));
 }
 
 static struct kernel_result handle_unlink(uint64_t address, uint64_t length,
                                           int remove_directory) {
-    char path[VFS_PATH_MAX];
-    uint32_t status = copy_path(path, address, length);
+    char *path;
+    uint32_t status = copy_path(&path, address, length);
     if (status != NARC_OK) return result_error(status);
     enum vfs_status result = vfs_unlink(path, remove_directory);
+    kfree(path);
     return result == VFS_OK ? result_ok(0) : result_error(vfs_error(result));
 }
 
 static struct kernel_result handle_rename(uint64_t old_address, uint64_t old_length,
                                           uint64_t new_address, uint64_t new_length) {
-    char old_path[VFS_PATH_MAX], new_path[VFS_PATH_MAX];
-    uint32_t status = copy_path(old_path, old_address, old_length);
+    char *old_path, *new_path;
+    uint32_t status = copy_path(&old_path, old_address, old_length);
     if (status != NARC_OK) return result_error(status);
-    status = copy_path(new_path, new_address, new_length);
-    if (status != NARC_OK) return result_error(status);
+    status = copy_path(&new_path, new_address, new_length);
+    if (status != NARC_OK) {
+        kfree(old_path);
+        return result_error(status);
+    }
     enum vfs_status result = vfs_rename(old_path, new_path);
+    kfree(old_path);
+    kfree(new_path);
     return result == VFS_OK ? result_ok(0) : result_error(vfs_error(result));
 }
 

@@ -3,7 +3,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define VFS_PATH_MAX 128
 #define VFS_NAME_MAX 64
 #define VFS_FILE_MAX (64ULL * 1024ULL)
 
