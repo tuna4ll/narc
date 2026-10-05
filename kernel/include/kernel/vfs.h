@@ -4,7 +4,6 @@
 #include <stdint.h>
 
 #define VFS_NAME_MAX 64
-#define VFS_FILE_MAX (64ULL * 1024ULL)
 
 #define VFS_REG 1
 #define VFS_DIR 2

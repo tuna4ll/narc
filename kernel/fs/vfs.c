@@ -6,7 +6,9 @@
 #define TAR_BLOCK 512
 #define S_IFREG 0100000
 #define S_IFDIR 0040000
-#define VFS_PAGE_MAX (VFS_FILE_MAX / PAGE_SIZE)
+#define TREE_SHIFT 9
+#define TREE_FANOUT (1u << TREE_SHIFT)
+#define TREE_DEPTH_MAX 6
 
 struct tar_header {
     char name[100];
@@ -28,6 +30,11 @@ struct tar_header {
     char pad[12];
 };
 
+struct page_tree {
+    uint64_t root;
+    unsigned depth;
+};
+
 struct vnode {
     struct vnode *parent, *children, *next;
     char *name;
@@ -38,7 +45,7 @@ struct vnode {
     uint32_t mode;
     uint8_t type;
     const uint8_t *archive;
-    uint64_t pages[VFS_PAGE_MAX];
+    struct page_tree pages;
 };
 
 static const uint8_t *tar_data;
@@ -152,11 +159,49 @@ static struct vnode *new_node(struct vnode *directory, const char *name, size_t 
     return node;
 }
 
-static void release_pages(struct vnode *node) {
-    for (size_t i = 0; i < VFS_PAGE_MAX; i++) {
-        if (node->pages[i]) pmm_free_page(node->pages[i]);
-        node->pages[i] = 0;
+static uint64_t *tree_slot(struct page_tree *tree, uint64_t index, int create) {
+    while (!tree->depth ||
+           (tree->depth < TREE_DEPTH_MAX && (index >> (TREE_SHIFT * tree->depth)))) {
+        if (!create) return 0;
+        uint64_t root = pmm_alloc_page();
+        if (!root) return 0;
+        *(uint64_t *)phys_to_virt(root) = tree->root;
+        tree->root = root;
+        tree->depth++;
     }
+    if (index >> (TREE_SHIFT * tree->depth)) return 0;
+    uint64_t *table = phys_to_virt(tree->root);
+    for (unsigned level = tree->depth; level > 1; level--) {
+        uint64_t *entry = &table[(index >> (TREE_SHIFT * (level - 1))) & (TREE_FANOUT - 1)];
+        if (!*entry) {
+            if (!create || !(*entry = pmm_alloc_page())) return 0;
+        }
+        table = phys_to_virt(*entry);
+    }
+    return &table[index & (TREE_FANOUT - 1)];
+}
+
+static void tree_free(uint64_t table, unsigned level) {
+    uint64_t *entries = phys_to_virt(table);
+    for (size_t i = 0; i < TREE_FANOUT; i++) {
+        if (!entries[i]) continue;
+        if (level > 1) tree_free(entries[i], level - 1);
+        else pmm_free_page(entries[i]);
+    }
+    pmm_free_page(table);
+}
+
+static void release_pages(struct vnode *node) {
+    if (node->pages.root) tree_free(node->pages.root, node->pages.depth);
+    node->pages.root = 0;
+    node->pages.depth = 0;
+}
+
+static uint8_t *file_page(struct vnode *node, uint64_t index, int create) {
+    uint64_t *slot = tree_slot(&node->pages, index, create);
+    if (!slot) return 0;
+    if (!*slot && (!create || !(*slot = pmm_alloc_page()))) return 0;
+    return phys_to_virt(*slot);
 }
 
 static void release_node(struct vnode *node) {
@@ -212,23 +257,16 @@ static enum vfs_status lookup_parent(const char *path, struct vnode **parent,
     return VFS_OK;
 }
 
-static int ensure_pages(struct vnode *node, uint64_t end) {
-    if (end > VFS_FILE_MAX) return -1;
-    size_t count = (size_t)((end + PAGE_SIZE - 1) / PAGE_SIZE);
-    for (size_t i = 0; i < count; i++) {
-        if (node->pages[i]) continue;
-        node->pages[i] = pmm_alloc_page();
-        if (!node->pages[i]) return -1;
+static int detach_archive(struct vnode *node) {
+    if (!node->archive) return 0;
+    for (uint64_t offset = 0; offset < node->size; offset += PAGE_SIZE) {
+        uint8_t *page = file_page(node, offset / PAGE_SIZE, 1);
+        if (!page) return -1;
+        size_t amount = node->size - offset > PAGE_SIZE ? PAGE_SIZE :
+                        (size_t)(node->size - offset);
+        memcpy(page, node->archive + offset, amount);
     }
-    if (node->archive) {
-        for (uint64_t offset = 0; offset < node->size; offset += PAGE_SIZE) {
-            size_t amount = node->size - offset > PAGE_SIZE ? PAGE_SIZE :
-                            (size_t)(node->size - offset);
-            memcpy(phys_to_virt(node->pages[offset / PAGE_SIZE]),
-                   node->archive + offset, amount);
-        }
-        node->archive = 0;
-    }
+    node->archive = 0;
     return 0;
 }
 
@@ -285,7 +323,6 @@ int vfs_init(const void *archive, uint64_t size) {
         if (!node || node->type != type) return -1;
         if (type != VFS_REG) continue;
         node->size = octal(header->size, sizeof(header->size));
-        if (node->size > VFS_FILE_MAX) return -1;
         node->archive = (const uint8_t *)header + TAR_BLOCK;
     }
     return 0;
@@ -350,11 +387,13 @@ long vfs_read(struct file *file, void *buffer, size_t length) {
     size_t done = 0;
     while (done < length) {
         uint64_t position = file->offset + done;
-        size_t chunk = PAGE_SIZE - (size_t)(position & (PAGE_SIZE - 1));
+        size_t in_page = (size_t)(position & (PAGE_SIZE - 1));
+        size_t chunk = PAGE_SIZE - in_page;
         if (chunk > length - done) chunk = length - done;
         const uint8_t *source = node->archive ? node->archive + position :
-                                phys_to_virt(node->pages[position / PAGE_SIZE]);
-        memcpy((uint8_t *)buffer + done, source, chunk);
+                                file_page(node, position / PAGE_SIZE, 0);
+        if (!source) memset((uint8_t *)buffer + done, 0, chunk);
+        else memcpy((uint8_t *)buffer + done, source + (node->archive ? 0 : in_page), chunk);
         done += chunk;
     }
     file->offset += done;
@@ -367,21 +406,22 @@ long vfs_write(struct file *file, const void *buffer, size_t length) {
         return -1;
     struct vnode *node = file->node;
     if (file->flags & VFS_OPEN_APPEND) file->offset = node->size;
-    if ((uint64_t)length > VFS_FILE_MAX - file->offset) return -1;
-    uint64_t end = file->offset + length;
-    if (ensure_pages(node, end > node->size ? end : node->size) != 0) return -1;
+    if ((uint64_t)length > (uint64_t)INT64_MAX - file->offset) return -1;
+    if (detach_archive(node) != 0) return -1;
     size_t done = 0;
     while (done < length) {
         uint64_t position = file->offset + done;
-        size_t chunk = PAGE_SIZE - (size_t)(position & (PAGE_SIZE - 1));
+        size_t in_page = (size_t)(position & (PAGE_SIZE - 1));
+        size_t chunk = PAGE_SIZE - in_page;
         if (chunk > length - done) chunk = length - done;
-        uint8_t *destination = phys_to_virt(node->pages[position / PAGE_SIZE]);
-        memcpy(destination + (position & (PAGE_SIZE - 1)),
-               (const uint8_t *)buffer + done, chunk);
+        uint8_t *page = file_page(node, position / PAGE_SIZE, 1);
+        if (!page) break;
+        memcpy(page + in_page, (const uint8_t *)buffer + done, chunk);
         done += chunk;
     }
-    file->offset = end;
-    if (end > node->size) node->size = end;
+    if (!done && length) return -1;
+    file->offset += done;
+    if (file->offset > node->size) node->size = file->offset;
     return (long)done;
 }
 
@@ -389,11 +429,9 @@ long vfs_seek(struct file *file, int64_t offset, int origin) {
     if (!file || !file->node || file->node->type != VFS_REG) return -1;
     int64_t base = origin == 0 ? 0 : origin == 1 ? (int64_t)file->offset :
                    origin == 2 ? (int64_t)file->node->size : -1;
-    if (base < 0 || offset < -base) return -1;
-    uint64_t next = (uint64_t)(base + offset);
-    if (next > VFS_FILE_MAX) return -1;
-    file->offset = next;
-    return (long)next;
+    if (base < 0 || offset < -base || (offset > 0 && base > INT64_MAX - offset)) return -1;
+    file->offset = (uint64_t)(base + offset);
+    return (long)file->offset;
 }
 
 int vfs_readdir(struct file *file, struct vfs_dirent *entry) {
