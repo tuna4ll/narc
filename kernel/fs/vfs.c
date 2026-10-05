@@ -248,7 +248,7 @@ static enum vfs_status lookup_parent(const char *path, struct vnode **parent,
     size_t start = end;
     while (start && path[start - 1] != '/') start--;
     if (start == end || dot_name(path + start, end - start)) return VFS_INVALID;
-    if (end - start >= VFS_NAME_MAX) return VFS_INVALID;
+    if (end - start > VFS_NAME_MAX) return VFS_INVALID;
     enum vfs_status status = walk(path, start, parent);
     if (status != VFS_OK) return status;
     if ((*parent)->type != VFS_DIR) return VFS_NOT_DIRECTORY;
@@ -285,7 +285,7 @@ static struct vnode *tar_node(const char *path, uint8_t type, uint32_t mode) {
             if (last) return node;
             continue;
         }
-        if (dot_name(start, length) || length >= VFS_NAME_MAX || node->type != VFS_DIR) return 0;
+        if (dot_name(start, length) || length > VFS_NAME_MAX || node->type != VFS_DIR) return 0;
         struct vnode *child = child_named(node, start, length);
         if (!child) child = new_node(node, start, length, last ? type : VFS_DIR,
                                      last ? mode : (S_IFDIR | 0755));

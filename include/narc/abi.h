@@ -7,7 +7,7 @@
 #define NARC_SYSCALL_TAG_MASK  UINT64_C(0xffffffff00000000)
 #define NARC_SYSCALL_ID_MASK   UINT64_C(0x00000000ffffffff)
 
-#define NARC_ABI_VERSION UINT64_C(1)
+#define NARC_ABI_VERSION UINT64_C(2)
 
 enum narc_syscall {
     NARC_SYS_ABI_QUERY = 0x0000,
@@ -83,7 +83,7 @@ enum narc_file_type {
     NARC_FILE_CHARACTER = 3,
 };
 
-#define NARC_NAME_MAX 64
+#define NARC_NAME_MAX 255
 
 typedef struct narc_file_info {
     uint64_t inode;
@@ -96,7 +96,7 @@ typedef struct narc_file_info {
 typedef struct narc_dir_entry {
     uint64_t inode;
     uint8_t type;
-    char name[NARC_NAME_MAX];
+    char name[NARC_NAME_MAX + 1];
     uint8_t reserved[7];
 } narc_dir_entry_t;
 

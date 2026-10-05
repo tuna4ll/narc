@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define VFS_NAME_MAX 64
+#define VFS_NAME_MAX 255
 
 #define VFS_REG 1
 #define VFS_DIR 2
@@ -45,7 +45,7 @@ struct vfs_info {
 struct vfs_dirent {
     uint64_t ino;
     uint8_t type;
-    char name[VFS_NAME_MAX];
+    char name[VFS_NAME_MAX + 1];
 };
 
 int vfs_init(const void *archive, uint64_t size);

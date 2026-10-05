@@ -12,7 +12,7 @@ typedef struct __libc_dir DIR;
 struct dirent {
     ino_t d_ino;
     unsigned char d_type;
-    char d_name[64];
+    char d_name[256];
 };
 
 DIR *opendir(const char *path);
