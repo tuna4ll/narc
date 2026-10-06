@@ -299,20 +299,35 @@ void task_exec(struct task_frame *frame, struct address_space *space, uint64_t p
     vmm_space_destroy(&old);
 }
 
+static int deliver(struct task *parent, struct task *child) {
+    if (!parent || parent->state != TASK_BLOCKED ||
+        (parent->wait_pid != -1 && parent->wait_pid != child->pid))
+        return 0;
+    copy_status(parent, parent->wait_status, child->exit_status << 8);
+    arch_syscall_return2(&parent->frame, (uint64_t)child->pid, 0);
+    parent->state = TASK_RUNNABLE;
+    return 1;
+}
+
+static void reparent(struct task *old) {
+    struct task *init = find_task(1);
+    if (init == old) init = 0;
+    for (struct task *child = task_list, *next; child; child = next) {
+        next = child->next;
+        if (child->ppid != old->pid) continue;
+        child->ppid = init ? init->pid : 0;
+        if (child->state == TASK_ZOMBIE && (!init || deliver(init, child))) task_free(child);
+    }
+}
+
 void task_exit(struct task_frame *frame, int status) {
     struct task *old = current;
     close_all(old);
     old->state = TASK_ZOMBIE;
     old->exit_status = status & 0xff;
+    reparent(old);
     struct task *parent = find_task(old->ppid);
-    int reap = 0;
-    if (parent && parent->state == TASK_BLOCKED &&
-        (parent->wait_pid == -1 || parent->wait_pid == old->pid)) {
-        copy_status(parent, parent->wait_status, old->exit_status << 8);
-        arch_syscall_return2(&parent->frame, (uint64_t)old->pid, 0);
-        parent->state = TASK_RUNNABLE;
-        reap = 1;
-    }
+    int reap = !parent || deliver(parent, old);
     struct task *next = next_task();
     if (!next) {
         console_puts("[kernel] userspace exited\n");
