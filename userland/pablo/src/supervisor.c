@@ -13,7 +13,7 @@ static char *const child_environment[] = {
 
 static int dependency_ready(struct pablo_supervisor *supervisor,
                             struct pablo_service *service) {
-    if (!service->after[0]) return 1;
+    if (!service->after) return 1;
     struct pablo_service *dependency = pablo_service_find(supervisor->config,
                                                           service->after);
     if (dependency->state == PABLO_FAILED) {
@@ -25,12 +25,6 @@ static int dependency_ready(struct pablo_supervisor *supervisor,
 }
 
 static void spawn_service(struct pablo_service *service) {
-    char *arguments[PABLO_ARG_MAX + 2];
-    arguments[0] = service->path;
-    for (size_t i = 0; i < service->argument_count; i++)
-        arguments[i + 1] = service->arguments[i];
-    arguments[service->argument_count + 1] = 0;
-
     pid_t pid = fork();
     if (pid < 0) {
         service->state = PABLO_BACKOFF;
@@ -38,7 +32,7 @@ static void spawn_service(struct pablo_service *service) {
         return;
     }
     if (!pid) {
-        execve(service->path, arguments, child_environment);
+        execve(service->path, service->argv, child_environment);
         _exit(127);
     }
     service->pid = pid;

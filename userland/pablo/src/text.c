@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <pablo/text.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int space(char character) {
@@ -15,11 +16,12 @@ char *pablo_trim(char *text) {
     return text;
 }
 
-int pablo_copy(char *destination, size_t capacity, const char *source) {
-    size_t length = strlen(source);
-    if (length >= capacity) return -1;
-    memcpy(destination, source, length + 1);
-    return 0;
+char *pablo_duplicate(const char *source, size_t length) {
+    char *copy = malloc(length + 1);
+    if (!copy) return 0;
+    memcpy(copy, source, length);
+    copy[length] = 0;
+    return copy;
 }
 
 int pablo_has_suffix(const char *text, const char *suffix) {

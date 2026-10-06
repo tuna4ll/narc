@@ -1,9 +1,0 @@
-#pragma once
-
-#define PABLO_SERVICE_MAX 16
-#define PABLO_NAME_MAX 32
-#define PABLO_SERVICE_FILE_MAX 40
-#define PABLO_PATH_MAX 128
-#define PABLO_ARG_MAX 8
-#define PABLO_ARG_LENGTH 64
-#define PABLO_FILE_MAX 4096

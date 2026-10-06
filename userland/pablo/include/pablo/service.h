@@ -1,6 +1,6 @@
 #pragma once
 
-#include <pablo/limits.h>
+#include <stddef.h>
 #include <sys/types.h>
 
 enum pablo_policy {
@@ -17,10 +17,10 @@ enum pablo_service_state {
 };
 
 struct pablo_service {
-    char name[PABLO_NAME_MAX];
-    char path[PABLO_PATH_MAX];
-    char after[PABLO_NAME_MAX];
-    char arguments[PABLO_ARG_MAX][PABLO_ARG_LENGTH];
+    char *name;
+    char *path;
+    char *after;
+    char **argv;
     size_t argument_count;
     enum pablo_policy policy;
     enum pablo_service_state state;
@@ -31,7 +31,7 @@ struct pablo_service {
 };
 
 struct pablo_config {
-    struct pablo_service services[PABLO_SERVICE_MAX];
+    struct pablo_service *services;
     size_t service_count;
     unsigned int restart_limit;
     unsigned int restart_delay;

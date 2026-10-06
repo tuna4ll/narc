@@ -2,4 +2,4 @@
 
 #include <stddef.h>
 
-int pablo_read_file(const char *path, char *buffer, size_t capacity, size_t *length);
+int pablo_read_file(const char *path, char **buffer, size_t *length);
