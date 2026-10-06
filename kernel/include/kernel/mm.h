@@ -6,6 +6,7 @@
 #define PAGE_SIZE 4096ULL
 #define VMM_WRITE (1ULL << 1)
 #define VMM_DEVICE (1ULL << 2)
+#define USER_MMAP_BASE 0x0000000100000000ULL
 
 struct address_space {
     uint64_t root;
@@ -23,6 +24,7 @@ struct address_space *vmm_space_current(void);
 int vmm_map_user(struct address_space *space, uint64_t virt, uint64_t phys, uint64_t flags);
 int vmm_protect_user(struct address_space *space, uint64_t virt, uint64_t flags);
 int vmm_unmap_user(struct address_space *space, uint64_t virt);
+uint64_t vmm_user_end(void);
 int vmm_user_range_ok(struct address_space *space, uint64_t virt, uint64_t len, int write);
 uint64_t vmm_user_phys(struct address_space *space, uint64_t virt);
 int vmm_map_kernel(uint64_t virt, uint64_t phys, uint64_t flags);

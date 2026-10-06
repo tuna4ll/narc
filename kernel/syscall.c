@@ -9,8 +9,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define USER_MMAP_BASE 0x0000000100000000ULL
-#define USER_MMAP_END  0x0000000140000000ULL
 
 struct kernel_result {
     uint64_t value;
@@ -267,7 +265,7 @@ static struct kernel_result handle_map(uint64_t length, uint64_t flags) {
 
     uint64_t size = page_align(length);
     uint64_t base = page_align(task_mmap_next());
-    if (!size || base < USER_MMAP_BASE || size > USER_MMAP_END - base)
+    if (!size || base < USER_MMAP_BASE || base > vmm_user_end() || size > vmm_user_end() - base)
         return result_error(NARC_NO_MEMORY);
 
     struct address_space *space = vmm_space_current();
@@ -297,7 +295,8 @@ static struct kernel_result handle_unmap(uint64_t address, uint64_t length) {
         return result_error(NARC_INVALID_ARGUMENT);
 
     uint64_t size = page_align(length);
-    if (!size || address < USER_MMAP_BASE || size > USER_MMAP_END - address)
+    if (!size || address < USER_MMAP_BASE || address > vmm_user_end() ||
+        size > vmm_user_end() - address)
         return result_error(NARC_INVALID_ARGUMENT);
 
     struct address_space *space = vmm_space_current();

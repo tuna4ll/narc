@@ -181,9 +181,13 @@ uint64_t vmm_user_phys(struct address_space *space, uint64_t virt) {
     return (*pte & ADDR_MASK) | (virt & (PAGE_SIZE - 1));
 }
 
+uint64_t vmm_user_end(void) {
+    return 0x0001000000000000ULL;
+}
+
 int vmm_user_range_ok(struct address_space *space, uint64_t virt, uint64_t len, int write) {
     if (!len) return 1;
-    if (virt > 0x0000ffffffffffffULL || len - 1 > 0x0000ffffffffffffULL - virt) return 0;
+    if (virt >= vmm_user_end() || len > vmm_user_end() - virt) return 0;
     uint64_t last = (virt + len - 1) & ~(PAGE_SIZE - 1);
     for (uint64_t page = virt & ~(PAGE_SIZE - 1);; page += PAGE_SIZE) {
         uint64_t *pte = get_pte(space->root, page, 0);
