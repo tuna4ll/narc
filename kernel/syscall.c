@@ -1,3 +1,4 @@
+#include <kernel/file.h>
 #include <kernel/heap.h>
 #include <kernel/mm.h>
 #include <kernel/syscall.h>
@@ -80,9 +81,9 @@ static uint32_t copy_path(char **path, uint64_t address, uint64_t length) {
     return NARC_OK;
 }
 
-static struct kernel_result handle_read(uint64_t fd, uint64_t buffer, uint64_t length) {
-    if (!task_fd_valid((int)fd)) return result_error(NARC_BAD_HANDLE);
-    struct file *file = task_fd_file((int)fd);
+static struct kernel_result read_file(struct open_file *open, uint64_t buffer,
+                                      uint64_t length) {
+    struct file *file = file_vfs(open);
     if (file) {
         struct vfs_info info;
         vfs_file_info(file, &info);
@@ -95,7 +96,7 @@ static struct kernel_result handle_read(uint64_t fd, uint64_t buffer, uint64_t l
     uint64_t done = 0;
     while (done < length) {
         size_t want = length - done > sizeof(chunk) ? sizeof(chunk) : (size_t)(length - done);
-        long got = task_fd_read((int)fd, chunk, want);
+        long got = file_read(open, chunk, want);
         if (got < 0) return done ? result_ok(done) : result_error(NARC_IO_ERROR);
         if (!got) break;
         if (copy_to_user(buffer + done, chunk, (size_t)got) != 0)
@@ -106,8 +107,16 @@ static struct kernel_result handle_read(uint64_t fd, uint64_t buffer, uint64_t l
     return result_ok(done);
 }
 
-static struct kernel_result handle_write(uint64_t fd, uint64_t buffer, uint64_t length) {
-    if (!task_fd_valid((int)fd)) return result_error(NARC_BAD_HANDLE);
+static struct kernel_result handle_read(uint64_t fd, uint64_t buffer, uint64_t length) {
+    struct open_file *open = fd_get(task_files(), (int)fd);
+    if (!open) return result_error(NARC_BAD_HANDLE);
+    struct kernel_result result = read_file(open, buffer, length);
+    file_put(open);
+    return result;
+}
+
+static struct kernel_result write_file(struct open_file *open, uint64_t buffer,
+                                       uint64_t length) {
     struct address_space *space = vmm_space_current();
     if (!vmm_user_range_ok(space, buffer, length, 0))
         return result_error(NARC_BAD_ADDRESS);
@@ -119,12 +128,20 @@ static struct kernel_result handle_write(uint64_t fd, uint64_t buffer, uint64_t 
         if (!phys) return result_error(NARC_BAD_ADDRESS);
         size_t chunk = PAGE_SIZE - (size_t)(ptr & (PAGE_SIZE - 1));
         if ((uint64_t)chunk > length - done) chunk = (size_t)(length - done);
-        long wrote = task_fd_write((int)fd, phys_to_virt(phys), chunk);
+        long wrote = file_write(open, phys_to_virt(phys), chunk);
         if (wrote < 0) return done ? result_ok(done) : result_error(NARC_IO_ERROR);
         done += (uint64_t)wrote;
         if ((size_t)wrote < chunk) break;
     }
     return result_ok(done);
+}
+
+static struct kernel_result handle_write(uint64_t fd, uint64_t buffer, uint64_t length) {
+    struct open_file *open = fd_get(task_files(), (int)fd);
+    if (!open) return result_error(NARC_BAD_HANDLE);
+    struct kernel_result result = write_file(open, buffer, length);
+    file_put(open);
+    return result;
 }
 
 static struct kernel_result handle_open(uint64_t address, uint64_t length, uint64_t flags) {
@@ -153,11 +170,15 @@ static struct kernel_result handle_open(uint64_t address, uint64_t length, uint6
     if (flags & NARC_OPEN_TRUNCATE) native_flags |= VFS_OPEN_TRUNCATE;
     if (flags & NARC_OPEN_EXCLUSIVE) native_flags |= VFS_OPEN_EXCLUSIVE;
     if (flags & NARC_OPEN_APPEND) native_flags |= VFS_OPEN_APPEND;
-    int status;
-    int fd = task_fd_open(path, native_flags, &status);
+    enum vfs_status status;
+    struct open_file *open = file_open(path, native_flags, &status);
     kfree(path);
-    if (fd == -2) return result_error(NARC_NO_MEMORY);
-    if (fd < 0) return result_error(vfs_error(status));
+    if (!open) return result_error(vfs_error(status));
+    int fd = fd_install(task_files(), open, 3);
+    if (fd < 0) {
+        file_put(open);
+        return result_error(NARC_NO_MEMORY);
+    }
     return result_ok((uint64_t)fd);
 }
 
@@ -197,24 +218,27 @@ static struct kernel_result handle_rename(uint64_t old_address, uint64_t old_len
 }
 
 static struct kernel_result handle_close(uint64_t fd) {
-    if (task_fd_close((int)fd) != 0) return result_error(NARC_BAD_HANDLE);
+    if (fd_close(task_files(), (int)fd) != 0) return result_error(NARC_BAD_HANDLE);
     return result_ok(0);
 }
 
 static struct kernel_result handle_seek(uint64_t fd, int64_t offset, uint64_t origin) {
     if (origin > NARC_SEEK_END) return result_error(NARC_INVALID_ARGUMENT);
-    struct file *file = task_fd_file((int)fd);
+    struct open_file *open = fd_get(task_files(), (int)fd);
+    struct file *file = file_vfs(open);
+    long value = file ? vfs_seek(file, offset, (int)origin) : 0;
+    file_put(open);
     if (!file) return result_error(NARC_BAD_HANDLE);
-    long value = vfs_seek(file, offset, (int)origin);
     if (value < 0) return result_error(NARC_INVALID_ARGUMENT);
     return result_ok((uint64_t)value);
 }
 
 static struct kernel_result handle_file_info(uint64_t fd, uint64_t address) {
-    if (!task_fd_valid((int)fd)) return result_error(NARC_BAD_HANDLE);
+    struct open_file *open = fd_get(task_files(), (int)fd);
+    if (!open) return result_error(NARC_BAD_HANDLE);
 
     narc_file_info_t info = { 0 };
-    struct file *file = task_fd_file((int)fd);
+    struct file *file = file_vfs(open);
     if (file) {
         struct vfs_info source;
         vfs_file_info(file, &source);
@@ -226,15 +250,13 @@ static struct kernel_result handle_file_info(uint64_t fd, uint64_t address) {
         info.mode = 0020000 | 0666;
         info.type = NARC_FILE_CHARACTER;
     }
+    file_put(open);
     if (copy_to_user(address, &info, sizeof(info)) != 0)
         return result_error(NARC_BAD_ADDRESS);
     return result_ok(0);
 }
 
-static struct kernel_result handle_read_dir(uint64_t fd, uint64_t address) {
-    struct file *file = task_fd_file((int)fd);
-    if (!file) return task_fd_valid((int)fd) ? result_error(NARC_NOT_DIRECTORY) :
-                                              result_error(NARC_BAD_HANDLE);
+static struct kernel_result read_dir(struct file *file, uint64_t address) {
     struct vfs_info info;
     vfs_file_info(file, &info);
     if (info.type != VFS_DIR) return result_error(NARC_NOT_DIRECTORY);
@@ -251,6 +273,16 @@ static struct kernel_result handle_read_dir(uint64_t fd, uint64_t address) {
     if (copy_to_user(address, &entry, sizeof(entry)) != 0)
         return result_error(NARC_BAD_ADDRESS);
     return result_ok(1);
+}
+
+static struct kernel_result handle_read_dir(uint64_t fd, uint64_t address) {
+    struct open_file *open = fd_get(task_files(), (int)fd);
+    if (!open) return result_error(NARC_BAD_HANDLE);
+    struct file *file = file_vfs(open);
+    struct kernel_result result = file ? read_dir(file, address) :
+                                         result_error(NARC_NOT_DIRECTORY);
+    file_put(open);
+    return result;
 }
 
 static uint64_t page_align(uint64_t value) {

@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 struct task;
-struct file;
+struct fd_table;
 
 struct task *task_create(void);
 struct address_space *task_space(struct task *task);
@@ -21,12 +21,4 @@ uint64_t task_fs_base(void);
 void task_set_fs_base(uint64_t value);
 uint64_t task_mmap_next(void);
 void task_set_mmap_next(uint64_t value);
-int task_fd_open(const char *path, uint32_t flags, int *status);
-struct file *task_fd_file(int fd);
-long task_fd_read(int fd, void *buf, size_t len);
-long task_fd_write(int fd, const void *buf, size_t len);
-int task_fd_close(int fd);
-int task_fd_valid(int fd);
-int task_fd_dup(int oldfd, int minimum);
-int task_fd_dup2(int oldfd, int newfd);
-int task_fd_pipe(int fds[2]);
+struct fd_table *task_files(void);
