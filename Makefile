@@ -41,7 +41,7 @@ ISO_BIOS_FLAGS := -b boot/limine/limine-bios-cd.bin -no-emul-boot -boot-load-siz
 else ifeq ($(ARCH),aarch64)
 KCC := aarch64-linux-gnu-gcc
 KLD := aarch64-linux-gnu-ld
-KERNEL_CFLAGS := -mgeneral-regs-only -mstrict-align
+KERNEL_CFLAGS := -mgeneral-regs-only -mstrict-align -mno-outline-atomics
 KERNEL_ASFLAGS :=
 USER_ARCH_FLAGS := -march=armv8-a -fno-link-libatomic
 USER_LINK_FLAGS := -no-pie -Wl,-Ttext-segment=$(USER_BASE)

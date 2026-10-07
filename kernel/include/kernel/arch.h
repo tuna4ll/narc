@@ -40,3 +40,50 @@ uint64_t arch_syscall_number(const struct task_frame *frame);
 uint64_t arch_syscall_arg(const struct task_frame *frame, unsigned index);
 void arch_syscall_return(struct task_frame *frame, uint64_t value);
 void arch_syscall_return2(struct task_frame *frame, uint64_t value, uint64_t status);
+
+#if defined(__x86_64__)
+static inline unsigned long arch_irq_save(void) {
+    unsigned long flags;
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
+    return flags & 0x200;
+}
+
+static inline void arch_irq_restore(unsigned long flags) {
+    if (flags) __asm__ volatile ("sti" ::: "memory");
+}
+
+static inline void arch_irq_enable(void) { __asm__ volatile ("sti" ::: "memory"); }
+static inline void arch_irq_disable(void) { __asm__ volatile ("cli" ::: "memory"); }
+static inline void arch_cpu_relax(void) { __asm__ volatile ("pause" ::: "memory"); }
+static inline void arch_idle(void) { __asm__ volatile ("sti; hlt; cli" ::: "memory"); }
+#elif defined(__aarch64__)
+static inline unsigned long arch_irq_save(void) {
+    unsigned long flags;
+    __asm__ volatile ("mrs %0, daif; msr daifset, #2" : "=r"(flags) : : "memory");
+    return flags;
+}
+
+static inline void arch_irq_restore(unsigned long flags) {
+    __asm__ volatile ("msr daif, %0" : : "r"(flags) : "memory");
+}
+
+static inline void arch_irq_enable(void) { __asm__ volatile ("msr daifclr, #2" ::: "memory"); }
+static inline void arch_irq_disable(void) { __asm__ volatile ("msr daifset, #2" ::: "memory"); }
+static inline void arch_cpu_relax(void) { __asm__ volatile ("yield" ::: "memory"); }
+static inline void arch_idle(void) { __asm__ volatile ("wfi; msr daifclr, #2; isb; msr daifset, #2" ::: "memory"); }
+#elif defined(__riscv)
+static inline unsigned long arch_irq_save(void) {
+    unsigned long flags;
+    __asm__ volatile ("csrrci %0, sstatus, 2" : "=r"(flags) : : "memory");
+    return flags & 2;
+}
+
+static inline void arch_irq_restore(unsigned long flags) {
+    if (flags) __asm__ volatile ("csrsi sstatus, 2" ::: "memory");
+}
+
+static inline void arch_irq_enable(void) { __asm__ volatile ("csrsi sstatus, 2" ::: "memory"); }
+static inline void arch_irq_disable(void) { __asm__ volatile ("csrci sstatus, 2" ::: "memory"); }
+static inline void arch_cpu_relax(void) { __asm__ volatile ("nop" ::: "memory"); }
+static inline void arch_idle(void) { __asm__ volatile ("wfi; csrsi sstatus, 2; csrci sstatus, 2" ::: "memory"); }
+#endif
