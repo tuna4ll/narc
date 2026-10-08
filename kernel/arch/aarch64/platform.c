@@ -3,7 +3,7 @@
 #include <kernel/serial.h>
 #include <kernel/string.h>
 #include <kernel/syscall.h>
-#include <kernel/task.h>
+#include <kernel/sched.h>
 
 #define GICD_BASE 0x08000000ULL
 #define GICC_BASE 0x08010000ULL
@@ -105,6 +105,21 @@ void arch_syscall_return2(struct task_frame *frame, uint64_t value, uint64_t sta
     frame->x[1] = status;
 }
 
+int arch_frame_from_user(const struct task_frame *frame) {
+    return (frame->pstate & 0xf) == 0;
+}
+
+uint64_t arch_context_init(uint64_t stack_top, void (*entry)(void)) {
+    uint64_t *sp = (uint64_t *)(uintptr_t)((stack_top & ~0xfULL) - 96);
+    memset(sp, 0, 96);
+    sp[11] = (uint64_t)(uintptr_t)entry;
+    return (uint64_t)(uintptr_t)sp;
+}
+
+void arch_set_kernel_stack(uint64_t top) {
+    (void)top;
+}
+
 void aarch64_sync(struct task_frame *frame) {
     uint64_t esr, far;
     if (current_el() == 2) __asm__ volatile ("mrs %0, esr_el2; mrs %1, far_el2" : "=r"(esr), "=r"(far));
@@ -127,7 +142,8 @@ void aarch64_irq(struct task_frame *frame) {
     uint32_t irq = gicc[0x0c / 4] & 0x3ff;
     if (irq == TIMER_IRQ) {
         timer_reset();
-        task_preempt(frame);
+        sched_tick();
     }
     gicc[0x10 / 4] = irq;
+    if (arch_frame_from_user(frame)) sched_user_return();
 }

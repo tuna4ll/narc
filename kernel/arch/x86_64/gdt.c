@@ -34,6 +34,10 @@ static void set_tss_descriptor(uintptr_t base, uint32_t limit) {
     gdt[6] = (uint64_t)(base >> 32);
 }
 
+void gdt_set_kernel_stack(uint64_t rsp0) {
+    tss.rsp0 = rsp0;
+}
+
 void gdt_init(uint64_t rsp0) {
     memset(gdt, 0, sizeof(gdt));
     memset(&tss, 0, sizeof(tss));

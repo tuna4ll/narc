@@ -106,6 +106,10 @@ int vmm_space_clone(struct address_space *dst, struct address_space *src) {
     return -1;
 }
 
+void vmm_space_boot(struct address_space *space) {
+    space->root = read_ttbr0();
+}
+
 void vmm_space_activate(struct address_space *space) {
     current_space = space;
     if (current_el() == 2) __asm__ volatile ("msr ttbr0_el2, %0; isb" : : "r"(space->root) : "memory");

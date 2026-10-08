@@ -1,6 +1,7 @@
 #include <kernel/idt.h>
 #include <kernel/mm.h>
-#include <kernel/task.h>
+#include <kernel/arch.h>
+#include <kernel/sched.h>
 #include <kernel/timer.h>
 #include <stdint.h>
 
@@ -29,5 +30,6 @@ void timer_init(void) {
 
 void timer_dispatch(struct task_frame *frame) {
     lapic[0xb0 / 4] = 0;
-    task_preempt(frame);
+    sched_tick();
+    if (arch_frame_from_user(frame)) sched_user_return();
 }

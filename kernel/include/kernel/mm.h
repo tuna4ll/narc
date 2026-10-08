@@ -18,6 +18,7 @@ void pmm_free_page(uint64_t phys);
 void *phys_to_virt(uint64_t phys);
 int vmm_space_create(struct address_space *space);
 int vmm_space_clone(struct address_space *dst, struct address_space *src);
+void vmm_space_boot(struct address_space *space);
 void vmm_space_activate(struct address_space *space);
 void vmm_space_destroy(struct address_space *space);
 struct address_space *vmm_space_current(void);

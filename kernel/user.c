@@ -3,6 +3,7 @@
 #include <kernel/heap.h>
 #include <kernel/mm.h>
 #include <kernel/string.h>
+#include <kernel/sched.h>
 #include <kernel/task.h>
 #include <kernel/uaccess.h>
 #include <kernel/user.h>
@@ -293,11 +294,11 @@ void user_start(void) {
     struct task *task = task_create();
     uint64_t entry, stack;
     if (!task || measure(&arguments) != 0 ||
-        load(task_space(task), argv[0], &arguments, &environment, &entry, &stack) != 0) {
+        load(&task->space, argv[0], &arguments, &environment, &entry, &stack) != 0) {
         console_puts("[panic] cannot start init\n");
         arch_halt();
     }
     task_set_entry(task, entry, stack);
     console_puts("[user] entering ring 3\n");
-    task_start();
+    sched_start(task);
 }

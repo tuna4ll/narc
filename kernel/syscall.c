@@ -1,6 +1,7 @@
 #include <kernel/file.h>
 #include <kernel/heap.h>
 #include <kernel/mm.h>
+#include <kernel/sched.h>
 #include <kernel/syscall.h>
 #include <kernel/task.h>
 #include <kernel/uaccess.h>
@@ -363,14 +364,13 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return_result(frame, result_ok(NARC_ABI_VERSION));
         return;
     case NARC_SYS_EXIT:
-        task_exit(frame, (int)a1);
-        return;
+        task_exit((int)a1);
     case NARC_SYS_GETPID:
         return_result(frame, result_ok((uint64_t)task_pid()));
         return;
     case NARC_SYS_YIELD:
         return_result(frame, result_ok(0));
-        task_yield(frame);
+        schedule();
         return;
     case NARC_SYS_FORK: {
         int pid = task_fork(frame);
@@ -378,14 +378,10 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return;
     }
     case NARC_SYS_WAIT: {
-        if (a2 && !vmm_user_range_ok(vmm_space_current(), a2, sizeof(int), 1)) {
-            return_result(frame, result_error(NARC_BAD_ADDRESS));
-            return;
-        }
-        long value;
-        if (task_wait(frame, (int)a1, a2, (int)a3, &value)) return;
-        return_result(frame, value < 0 ? result_error(NARC_NO_CHILD) :
-                                        result_ok((uint64_t)value));
+        long value = task_wait((int)a1, a2, (int)a3);
+        return_result(frame, value == -2 ? result_error(NARC_BAD_ADDRESS) :
+                             value < 0 ? result_error(NARC_NO_CHILD) :
+                                         result_ok((uint64_t)value));
         return;
     }
     case NARC_SYS_EXEC: {
@@ -442,9 +438,11 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
 
 void syscall_dispatch(struct task_frame *frame) {
     uint64_t number = arch_syscall_number(frame);
-    if ((number & NARC_SYSCALL_TAG_MASK) != NARC_SYSCALL_TAG) {
+    arch_irq_enable();
+    if ((number & NARC_SYSCALL_TAG_MASK) != NARC_SYSCALL_TAG)
         return_result(frame, result_error(NARC_NOT_SUPPORTED));
-        return;
-    }
-    dispatch(frame, number & NARC_SYSCALL_ID_MASK);
+    else
+        dispatch(frame, number & NARC_SYSCALL_ID_MASK);
+    arch_irq_disable();
+    sched_user_return();
 }

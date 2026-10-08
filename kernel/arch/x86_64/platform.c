@@ -8,6 +8,8 @@
 
 #define IA32_FS_BASE 0xc0000100u
 
+extern uint64_t syscall_kernel_rsp;
+
 void arch_init(uint64_t kernel_stack) {
     cpu_init();
     gdt_init(kernel_stack);
@@ -66,4 +68,20 @@ void arch_syscall_return(struct task_frame *frame, uint64_t value) {
 void arch_syscall_return2(struct task_frame *frame, uint64_t value, uint64_t status) {
     frame->rax = value;
     frame->rdx = status;
+}
+
+int arch_frame_from_user(const struct task_frame *frame) {
+    return (frame->cs & 3) == 3;
+}
+
+uint64_t arch_context_init(uint64_t stack_top, void (*entry)(void)) {
+    uint64_t *sp = (uint64_t *)(uintptr_t)((stack_top & ~0xfULL) - 64);
+    memset(sp, 0, 64);
+    sp[6] = (uint64_t)(uintptr_t)entry;
+    return (uint64_t)(uintptr_t)sp;
+}
+
+void arch_set_kernel_stack(uint64_t top) {
+    gdt_set_kernel_stack(top);
+    syscall_kernel_rsp = top;
 }

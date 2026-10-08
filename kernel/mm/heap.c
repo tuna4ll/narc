@@ -190,3 +190,26 @@ void kfree(void *ptr) {
     unmap_pages(base, pages);
     window_free(base, pages);
 }
+
+uint64_t kstack_alloc(size_t size) {
+    uint64_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+    uint64_t base = window_alloc(pages + 1);
+    if (!base) return 0;
+    for (uint64_t i = 1; i <= pages; i++) {
+        uint64_t phys = pmm_alloc_page();
+        if (!phys || vmm_map_kernel(base + i * PAGE_SIZE, phys, VMM_WRITE) != 0) {
+            if (phys) pmm_free_page(phys);
+            unmap_pages(base + PAGE_SIZE, i - 1);
+            window_free(base, pages + 1);
+            return 0;
+        }
+    }
+    return base + (pages + 1) * PAGE_SIZE;
+}
+
+void kstack_free(uint64_t top, size_t size) {
+    uint64_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+    uint64_t base = top - (pages + 1) * PAGE_SIZE;
+    unmap_pages(base + PAGE_SIZE, pages);
+    window_free(base, pages + 1);
+}

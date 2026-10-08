@@ -166,6 +166,10 @@ fail:
     return -1;
 }
 
+void vmm_space_boot(struct address_space *space) {
+    space->root = read_cr3();
+}
+
 void vmm_space_activate(struct address_space *space) {
     current_space = space;
     __asm__ volatile ("mov %0, %%cr3" : : "r"(space->root) : "memory");

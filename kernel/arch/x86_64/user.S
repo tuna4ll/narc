@@ -1,7 +1,7 @@
 .section .text
-.global task_enter
-.type task_enter, @function
-task_enter:
+.global arch_enter_user
+.type arch_enter_user, @function
+arch_enter_user:
     cli
     mov $0x1b, %ax
     mov %ax, %ds
@@ -24,4 +24,4 @@ task_enter:
     movq 120(%rsp), %r11
     movq 128(%rsp), %rsp
     sysretq
-.size task_enter, .-task_enter
+.size arch_enter_user, .-arch_enter_user

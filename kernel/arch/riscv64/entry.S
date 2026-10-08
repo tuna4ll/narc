@@ -3,6 +3,9 @@
 .global riscv_trap_entry
 riscv_trap_entry:
     csrrw sp, sscratch, sp
+    bnez sp, 1f
+    csrrw sp, sscratch, sp
+1:
     addi sp, sp, -272
     sd zero, 0(sp)
     sd ra, 8(sp)
@@ -36,7 +39,11 @@ riscv_trap_entry:
     sd t5, 240(sp)
     sd t6, 248(sp)
     csrr t0, sscratch
+    bnez t0, 2f
+    addi t0, sp, 272
+2:
     sd t0, 16(sp)
+    csrw sscratch, zero
     csrr t0, sepc
     csrr t1, sstatus
     sd t0, 256(sp)
@@ -44,15 +51,21 @@ riscv_trap_entry:
     mv a0, sp
     call riscv_trap
 
+.global riscv_trap_return
+riscv_trap_return:
     ld t0, 256(sp)
     ld t1, 264(sp)
     csrw sepc, t0
     csrw sstatus, t1
-    ld t0, 16(sp)
+    andi t1, t1, 0x100
+    bnez t1, 3f
+    addi t0, sp, 272
     csrw sscratch, t0
+3:
     ld ra, 8(sp)
     ld gp, 24(sp)
     ld tp, 32(sp)
+    ld t0, 40(sp)
     ld t1, 48(sp)
     ld t2, 56(sp)
     ld s0, 64(sp)
@@ -79,52 +92,14 @@ riscv_trap_entry:
     ld t4, 232(sp)
     ld t5, 240(sp)
     ld t6, 248(sp)
-    ld t0, 40(sp)
-    addi sp, sp, 272
-    csrrw sp, sscratch, sp
+    ld sp, 16(sp)
     sret
 
-.global task_enter
-.type task_enter, @function
-task_enter:
-    mv t6, a0
-    csrw sscratch, sp
-    ld t0, 256(t6)
-    ld t1, 264(t6)
-    csrw sepc, t0
-    csrw sstatus, t1
-    ld ra, 8(t6)
-    ld gp, 24(t6)
-    ld tp, 32(t6)
-    ld t0, 40(t6)
-    ld t1, 48(t6)
-    ld t2, 56(t6)
-    ld s0, 64(t6)
-    ld s1, 72(t6)
-    ld a0, 80(t6)
-    ld a1, 88(t6)
-    ld a2, 96(t6)
-    ld a3, 104(t6)
-    ld a4, 112(t6)
-    ld a5, 120(t6)
-    ld a6, 128(t6)
-    ld a7, 136(t6)
-    ld s2, 144(t6)
-    ld s3, 152(t6)
-    ld s4, 160(t6)
-    ld s5, 168(t6)
-    ld s6, 176(t6)
-    ld s7, 184(t6)
-    ld s8, 192(t6)
-    ld s9, 200(t6)
-    ld s10, 208(t6)
-    ld s11, 216(t6)
-    ld t3, 224(t6)
-    ld t4, 232(t6)
-    ld t5, 240(t6)
-    ld sp, 16(t6)
-    ld t6, 248(t6)
-    sret
+.global arch_enter_user
+.type arch_enter_user, @function
+arch_enter_user:
+    mv sp, a0
+    j riscv_trap_return
 
 .option push
 .option arch, +f,+d

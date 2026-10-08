@@ -2,6 +2,7 @@
 #include <kernel/heap.h>
 #include <kernel/limine.h>
 #include <kernel/mm.h>
+#include <kernel/sched.h>
 #include <kernel/serial.h>
 #include <kernel/user.h>
 #include <kernel/vfs.h>
@@ -58,6 +59,7 @@ void _start(void) {
     mm_init(memmap_request.response, hhdm_request.response->offset);
     arch_init((uint64_t)(uintptr_t)(kernel_stack + sizeof(kernel_stack)));
     heap_init();
+    sched_init((uint64_t)(uintptr_t)(kernel_stack + sizeof(kernel_stack)));
     serial_init();
     if (console_init(framebuffer_request.response) != 0) {
         arch_halt();
@@ -72,5 +74,5 @@ void _start(void) {
     console_puts("[kernel] ring 0 initialized\n");
 
     user_start();
-    arch_halt();
+    sched_idle();
 }

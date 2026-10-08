@@ -112,6 +112,10 @@ fail:
     return -1;
 }
 
+void vmm_space_boot(struct address_space *space) {
+    space->root = (read_satp() & SATP_PPN_MASK) << 12;
+}
+
 void vmm_space_activate(struct address_space *space) {
     current_space = space;
     uint64_t satp = (read_satp() & SATP_MODE_MASK) | (space->root >> 12);

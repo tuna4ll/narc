@@ -1,7 +1,7 @@
 #include <kernel/arch.h>
 #include <kernel/string.h>
 #include <kernel/syscall.h>
-#include <kernel/task.h>
+#include <kernel/sched.h>
 
 extern char riscv_trap_entry[];
 
@@ -17,13 +17,15 @@ static void timer_reset(void) {
 }
 
 void arch_init(uint64_t kernel_stack) {
-    __asm__ volatile ("csrw stvec, %0; csrw sscratch, %1"
-                      : : "r"(riscv_trap_entry), "r"(kernel_stack) : "memory");
+    (void)kernel_stack;
+    __asm__ volatile ("csrw stvec, %0; csrw sscratch, zero"
+                      : : "r"(riscv_trap_entry) : "memory");
     uint64_t sie;
     __asm__ volatile ("csrr %0, sie" : "=r"(sie));
     sie |= 1ULL << 5;
     __asm__ volatile ("csrw sie, %0; csrs sstatus, %1"
                       : : "r"(sie), "r"(3ULL << 13));
+    arch_irq_disable();
     timer_reset();
 }
 
@@ -66,12 +68,28 @@ void arch_syscall_return2(struct task_frame *frame, uint64_t value, uint64_t sta
     frame->x[11] = status;
 }
 
+int arch_frame_from_user(const struct task_frame *frame) {
+    return !(frame->status & (1ULL << 8));
+}
+
+uint64_t arch_context_init(uint64_t stack_top, void (*entry)(void)) {
+    uint64_t *sp = (uint64_t *)(uintptr_t)((stack_top & ~0xfULL) - 112);
+    memset(sp, 0, 112);
+    sp[0] = (uint64_t)(uintptr_t)entry;
+    return (uint64_t)(uintptr_t)sp;
+}
+
+void arch_set_kernel_stack(uint64_t top) {
+    (void)top;
+}
+
 void riscv_trap(struct task_frame *frame) {
     uint64_t cause;
     __asm__ volatile ("csrr %0, scause" : "=r"(cause));
     if (cause == ((1ULL << 63) | 5)) {
         timer_reset();
-        task_preempt(frame);
+        sched_tick();
+        if (arch_frame_from_user(frame)) sched_user_return();
         return;
     }
     if (cause == 8) {

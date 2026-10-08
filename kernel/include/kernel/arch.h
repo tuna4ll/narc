@@ -40,6 +40,11 @@ uint64_t arch_syscall_number(const struct task_frame *frame);
 uint64_t arch_syscall_arg(const struct task_frame *frame, unsigned index);
 void arch_syscall_return(struct task_frame *frame, uint64_t value);
 void arch_syscall_return2(struct task_frame *frame, uint64_t value, uint64_t status);
+int arch_frame_from_user(const struct task_frame *frame);
+uint64_t arch_context_init(uint64_t stack_top, void (*entry)(void));
+void arch_context_switch(uint64_t *prev, uint64_t next);
+void arch_set_kernel_stack(uint64_t top);
+void arch_enter_user(struct task_frame *frame) __attribute__((noreturn));
 
 #if defined(__x86_64__)
 static inline unsigned long arch_irq_save(void) {
