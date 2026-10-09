@@ -1,4 +1,5 @@
 #pragma once
+#include <kernel/spinlock.h>
 #include <kernel/vfs.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -19,6 +20,7 @@ struct open_file {
 };
 
 struct fd_table {
+    struct spinlock lock;
     struct open_file **files;
     int count;
 };
