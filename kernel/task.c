@@ -46,6 +46,7 @@ static struct task *task_alloc(void) {
     task->frame = (struct task_frame *)(uintptr_t)(task->kstack_top - sizeof(struct task_frame));
     task->context = arch_context_init((uint64_t)(uintptr_t)task->frame, task_trampoline);
     task->state = TASK_NEW;
+    wait_queue_init(&task->child_exit);
     return task;
 }
 
@@ -138,9 +139,10 @@ long task_wait(int pid, uint64_t status, int options) {
     struct task *self = task_current();
     if (status && !vmm_user_range_ok(&self->space, status, sizeof(int), 1)) return -2;
     struct task *zombie = 0;
+    struct waiter waiter = { 0 };
     int found;
     for (;;) {
-        sched_sleep_prepare();
+        wait_prepare(&self->child_exit, &waiter);
         found = 0;
         spin_lock(&task_lock);
         for (struct task *child = task_list; child; child = child->next) {
@@ -155,7 +157,7 @@ long task_wait(int pid, uint64_t status, int options) {
         if (zombie || !found || (options & WAIT_NOHANG)) break;
         schedule();
     }
-    sched_sleep_cancel();
+    wait_finish(&self->child_exit, &waiter);
     if (!zombie) return found ? 0 : -1;
     while (__atomic_load_n(&zombie->on_cpu, __ATOMIC_ACQUIRE)) arch_cpu_relax();
     copy_status(self, status, zombie->exit_status << 8);
@@ -201,8 +203,8 @@ void task_exit(int status) {
     self->exit_status = status & 0xff;
     self->exited = 1;
     struct task *parent = find_task(self->ppid);
-    if (parent) sched_wake(parent);
-    if (init && orphaned_zombie) sched_wake(init);
+    if (parent) wake_up_all(&parent->child_exit);
+    if (init && orphaned_zombie) wake_up_all(&init->child_exit);
     spin_unlock(&task_lock);
     sched_exit();
 }

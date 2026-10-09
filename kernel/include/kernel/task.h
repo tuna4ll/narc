@@ -1,6 +1,7 @@
 #pragma once
 #include <kernel/arch.h>
 #include <kernel/mm.h>
+#include <kernel/wait.h>
 #include <stdint.h>
 
 enum task_state {
@@ -25,6 +26,7 @@ struct task {
     struct address_space space;
     uint64_t fs_base, mmap_next;
     struct fd_table *files;
+    struct wait_queue child_exit;
     uint8_t arch_state[ARCH_STATE_SIZE] __attribute__((aligned(16)));
 };
 
