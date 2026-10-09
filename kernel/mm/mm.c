@@ -1,4 +1,5 @@
 #include <kernel/mm.h>
+#include <kernel/spinlock.h>
 #include <kernel/string.h>
 
 #if defined(__x86_64__)
@@ -15,6 +16,7 @@ static uint64_t region_index;
 static uint64_t next_phys;
 static uint64_t region_end;
 static uint64_t free_head;
+static struct spinlock pmm_lock = SPINLOCK_INIT;
 #if defined(__x86_64__)
 static struct address_space *current_space;
 #endif
@@ -36,11 +38,10 @@ void *phys_to_virt(uint64_t phys) {
     return (void *)(uintptr_t)(phys + hhdm);
 }
 
-uint64_t pmm_alloc_page(void) {
+static uint64_t take_page(void) {
     if (free_head) {
         uint64_t page = free_head;
         free_head = *(uint64_t *)phys_to_virt(page);
-        memset(phys_to_virt(page), 0, PAGE_SIZE);
         return page;
     }
 
@@ -48,7 +49,6 @@ uint64_t pmm_alloc_page(void) {
         if (next_phys && next_phys + PAGE_SIZE <= region_end) {
             uint64_t page = next_phys;
             next_phys += PAGE_SIZE;
-            memset(phys_to_virt(page), 0, PAGE_SIZE);
             return page;
         }
 
@@ -64,10 +64,20 @@ uint64_t pmm_alloc_page(void) {
     }
 }
 
+uint64_t pmm_alloc_page(void) {
+    unsigned long flags = spin_lock_irqsave(&pmm_lock);
+    uint64_t page = take_page();
+    spin_unlock_irqrestore(&pmm_lock, flags);
+    if (page) memset(phys_to_virt(page), 0, PAGE_SIZE);
+    return page;
+}
+
 void pmm_free_page(uint64_t phys) {
     if (!phys || (phys & (PAGE_SIZE - 1))) return;
+    unsigned long flags = spin_lock_irqsave(&pmm_lock);
     *(uint64_t *)phys_to_virt(phys) = free_head;
     free_head = phys;
+    spin_unlock_irqrestore(&pmm_lock, flags);
 }
 
 #if defined(__x86_64__)

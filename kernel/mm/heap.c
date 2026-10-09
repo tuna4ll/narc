@@ -1,5 +1,6 @@
 #include <kernel/heap.h>
 #include <kernel/mm.h>
+#include <kernel/spinlock.h>
 #include <kernel/string.h>
 #include <stdint.h>
 
@@ -26,6 +27,7 @@ static const size_t class_size[CLASS_COUNT] = { 16, 32, 64, 128, 256, 512, 1024 
 static struct free_object *free_objects[CLASS_COUNT];
 static struct range *free_ranges;
 static uint64_t window_base, window_end, window_next;
+static struct spinlock heap_lock = SPINLOCK_INIT;
 
 void heap_init(void) {
     uint64_t size;
@@ -64,6 +66,20 @@ static void *small_alloc(int class) {
     return object;
 }
 
+static void small_free(void *ptr, int class) {
+    struct free_object *object = ptr;
+    object->next = free_objects[class];
+    free_objects[class] = object;
+}
+
+static struct range *range_alloc(void) {
+    return small_alloc(class_for(sizeof(struct range)));
+}
+
+static void range_free(struct range *range) {
+    small_free(range, class_for(sizeof(struct range)));
+}
+
 static uint64_t window_alloc(uint64_t pages) {
     for (struct range **link = &free_ranges; *link; link = &(*link)->next) {
         struct range *range = *link;
@@ -73,7 +89,7 @@ static uint64_t window_alloc(uint64_t pages) {
         range->pages -= pages;
         if (!range->pages) {
             *link = range->next;
-            kfree(range);
+            range_free(range);
         }
         return base;
     }
@@ -94,7 +110,7 @@ static void window_free(uint64_t base, uint64_t pages) {
         if (next && prev->base + prev->pages * PAGE_SIZE == next->base) {
             prev->pages += next->pages;
             prev->next = next->next;
-            kfree(next);
+            range_free(next);
         }
         return;
     }
@@ -103,7 +119,7 @@ static void window_free(uint64_t base, uint64_t pages) {
         next->pages += pages;
         return;
     }
-    struct range *range = kmalloc(sizeof(*range));
+    struct range *range = range_alloc();
     if (!range) return;
     range->base = base;
     range->pages = pages;
@@ -153,7 +169,10 @@ static size_t usable_size(struct page_header *header) {
 void *kmalloc(size_t size) {
     if (!size) size = 1;
     int class = class_for(size);
-    return class >= 0 ? small_alloc(class) : large_alloc(size);
+    spin_lock(&heap_lock);
+    void *ptr = class >= 0 ? small_alloc(class) : large_alloc(size);
+    spin_unlock(&heap_lock);
+    return ptr;
 }
 
 void *kzalloc(size_t size) {
@@ -179,37 +198,40 @@ void kfree(void *ptr) {
     if (!ptr) return;
     struct page_header *header = header_of(ptr);
     if (!header) return;
+    spin_lock(&heap_lock);
     if (header->class < CLASS_COUNT) {
-        struct free_object *object = ptr;
-        object->next = free_objects[header->class];
-        free_objects[header->class] = object;
-        return;
+        small_free(ptr, (int)header->class);
+    } else {
+        uint64_t base = (uint64_t)(uintptr_t)header, pages = header->pages;
+        header->magic = 0;
+        unmap_pages(base, pages);
+        window_free(base, pages);
     }
-    uint64_t base = (uint64_t)(uintptr_t)header, pages = header->pages;
-    header->magic = 0;
-    unmap_pages(base, pages);
-    window_free(base, pages);
+    spin_unlock(&heap_lock);
 }
 
 uint64_t kstack_alloc(size_t size) {
     uint64_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+    spin_lock(&heap_lock);
     uint64_t base = window_alloc(pages + 1);
-    if (!base) return 0;
-    for (uint64_t i = 1; i <= pages; i++) {
+    for (uint64_t i = 1; base && i <= pages; i++) {
         uint64_t phys = pmm_alloc_page();
         if (!phys || vmm_map_kernel(base + i * PAGE_SIZE, phys, VMM_WRITE) != 0) {
             if (phys) pmm_free_page(phys);
             unmap_pages(base + PAGE_SIZE, i - 1);
             window_free(base, pages + 1);
-            return 0;
+            base = 0;
         }
     }
-    return base + (pages + 1) * PAGE_SIZE;
+    spin_unlock(&heap_lock);
+    return base ? base + (pages + 1) * PAGE_SIZE : 0;
 }
 
 void kstack_free(uint64_t top, size_t size) {
     uint64_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     uint64_t base = top - (pages + 1) * PAGE_SIZE;
+    spin_lock(&heap_lock);
     unmap_pages(base + PAGE_SIZE, pages);
     window_free(base, pages + 1);
+    spin_unlock(&heap_lock);
 }
