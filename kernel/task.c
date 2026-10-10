@@ -160,7 +160,7 @@ long task_wait(int pid, uint64_t status, int options) {
     wait_finish(&self->child_exit, &waiter);
     if (!zombie) return found ? 0 : -1;
     while (__atomic_load_n(&zombie->on_cpu, __ATOMIC_ACQUIRE)) arch_cpu_relax();
-    copy_status(self, status, zombie->exit_status << 8);
+    copy_status(self, status, zombie->wait_status);
     long result = zombie->pid;
     task_destroy(zombie);
     return result;
@@ -181,10 +181,11 @@ void task_exec(struct task_frame *frame, struct address_space *space, uint64_t p
     vmm_space_destroy(&old);
 }
 
-void task_exit(int status) {
+__attribute__((noreturn))
+static void do_exit(int wait_status) {
     struct task *self = task_current();
     if (self->pid == 1) {
-        console_puts("[kernel] init exited\n");
+        console_puts(wait_status & 0x7f ? "[kernel] init killed\n" : "[kernel] init exited\n");
         for (;;) arch_halt();
     }
     fd_table_release(self->files);
@@ -200,13 +201,22 @@ void task_exit(int status) {
         child->ppid = init ? init->pid : 0;
         orphaned_zombie |= child->exited;
     }
-    self->exit_status = status & 0xff;
+    self->wait_status = wait_status;
     self->exited = 1;
     struct task *parent = find_task(self->ppid);
     if (parent) wake_up_all(&parent->child_exit);
     if (init && orphaned_zombie) wake_up_all(&init->child_exit);
     spin_unlock(&task_lock);
     sched_exit();
+}
+
+void task_exit(int status) {
+    do_exit((status & 0xff) << 8);
+}
+
+void task_kill_fault(int signal) {
+    arch_irq_enable();
+    do_exit(signal & 0x7f);
 }
 
 int task_pid(void) { return task_current()->pid; }

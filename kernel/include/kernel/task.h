@@ -19,7 +19,7 @@ struct task {
     int pid, ppid;
     int state;
     int on_cpu, on_rq;
-    int exited, exit_status;
+    int exited, wait_status;
     uint64_t context;
     uint64_t kstack_top;
     struct task_frame *frame;
@@ -37,6 +37,7 @@ int task_fork(struct task_frame *frame);
 long task_wait(int pid, uint64_t status, int options);
 void task_exec(struct task_frame *frame, struct address_space *space, uint64_t pc, uint64_t sp);
 void task_exit(int status) __attribute__((noreturn));
+void task_kill_fault(int signal) __attribute__((noreturn));
 int task_pid(void);
 uint64_t task_fs_base(void);
 void task_set_fs_base(uint64_t value);

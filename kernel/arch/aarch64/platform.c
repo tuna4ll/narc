@@ -4,7 +4,8 @@
 #include <kernel/string.h>
 #include <kernel/syscall.h>
 #include <kernel/sched.h>
-#include <kernel/serial.h>
+#include <kernel/task.h>
+#include <narc/abi.h>
 
 #define GICD_BASE 0x08000000ULL
 #define GICC_BASE 0x08010000ULL
@@ -129,6 +130,21 @@ void arch_serial_irq_init(void) {
     gicd[0x100 / 4 + SERIAL_IRQ / 32] = 1U << (SERIAL_IRQ % 32);
 }
 
+static int fault_signal(uint64_t esr) {
+    switch (esr >> 26) {
+    case 0x20: case 0x24:
+        return (esr & 0x3f) == 0x21 ? NARC_SIGBUS : NARC_SIGSEGV;
+    case 0x22: case 0x26:
+        return NARC_SIGBUS;
+    case 0x2c:
+        return NARC_SIGFPE;
+    case 0x30: case 0x32: case 0x34: case 0x3c:
+        return NARC_SIGTRAP;
+    default:
+        return NARC_SIGILL;
+    }
+}
+
 void aarch64_sync(struct task_frame *frame) {
     uint64_t esr, far;
     if (current_el() == 2) __asm__ volatile ("mrs %0, esr_el2; mrs %1, far_el2" : "=r"(esr), "=r"(far));
@@ -137,7 +153,8 @@ void aarch64_sync(struct task_frame *frame) {
         syscall_dispatch(frame);
         return;
     }
-    serial_puts("[fault] esr=");
+    if (arch_frame_from_user(frame)) task_kill_fault(fault_signal(esr));
+    serial_puts("[panic] esr=");
     serial_puthex(esr);
     serial_puts(" elr=");
     serial_puthex(frame->pc);

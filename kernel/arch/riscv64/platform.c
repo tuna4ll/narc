@@ -4,6 +4,8 @@
 #include <kernel/mm.h>
 #include <kernel/sched.h>
 #include <kernel/serial.h>
+#include <kernel/task.h>
+#include <narc/abi.h>
 
 #define PLIC_BASE 0x0c000000ULL
 #define PLIC_CONTEXT 1
@@ -114,6 +116,15 @@ static void external_interrupt(void) {
     if (irq) *claim = irq;
 }
 
+static int fault_signal(uint64_t cause) {
+    switch (cause) {
+    case 0: case 4: case 6: return NARC_SIGBUS;
+    case 2:                 return NARC_SIGILL;
+    case 3:                 return NARC_SIGTRAP;
+    default:                return NARC_SIGSEGV;
+    }
+}
+
 void riscv_trap(struct task_frame *frame) {
     uint64_t cause;
     __asm__ volatile ("csrr %0, scause" : "=r"(cause));
@@ -133,5 +144,15 @@ void riscv_trap(struct task_frame *frame) {
         syscall_dispatch(frame);
         return;
     }
+    if (arch_frame_from_user(frame)) task_kill_fault(fault_signal(cause));
+    uint64_t tval;
+    __asm__ volatile ("csrr %0, stval" : "=r"(tval));
+    serial_puts("[panic] scause=");
+    serial_puthex(cause);
+    serial_puts(" sepc=");
+    serial_puthex(frame->pc);
+    serial_puts(" stval=");
+    serial_puthex(tval);
+    serial_putc('\n');
     arch_halt();
 }
