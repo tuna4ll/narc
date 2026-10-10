@@ -1,5 +1,6 @@
 #include <kernel/heap.h>
 #include <kernel/mm.h>
+#include <kernel/mutex.h>
 #include <kernel/string.h>
 #include <kernel/vfs.h>
 
@@ -46,12 +47,14 @@ struct vnode {
     uint8_t type;
     const uint8_t *archive;
     struct page_tree pages;
+    struct mutex data_lock;
 };
 
 static const uint8_t *tar_data;
 static uint64_t tar_size;
 static uint64_t next_inode;
 static struct vnode *root;
+static struct mutex namespace_lock = MUTEX_INIT;
 
 static size_t str_len(const char *string) {
     size_t length = 0;
@@ -152,6 +155,7 @@ static struct vnode *new_node(struct vnode *directory, const char *name, size_t 
         kfree(node);
         return 0;
     }
+    mutex_init(&node->data_lock);
     node->ino = next_inode++;
     node->type = type;
     node->mode = mode;
@@ -305,6 +309,7 @@ int vfs_init(const void *archive, uint64_t size) {
     next_inode = 2;
     root = kzalloc(sizeof(*root));
     if (!root || !(root->name = copy_name("", 0))) return -1;
+    mutex_init(&root->data_lock);
     root->ino = 1;
     root->type = VFS_DIR;
     root->mode = S_IFDIR | 0755;
@@ -328,8 +333,7 @@ int vfs_init(const void *archive, uint64_t size) {
     return 0;
 }
 
-enum vfs_status vfs_open(const char *path, uint32_t flags, struct file *file) {
-    if (!file) return VFS_INVALID;
+static enum vfs_status open_locked(const char *path, uint32_t flags, struct vnode **result) {
     struct vnode *node;
     enum vfs_status status = lookup(path, &node);
     if (status == VFS_NOT_FOUND && (flags & VFS_OPEN_CREATE)) {
@@ -348,6 +352,19 @@ enum vfs_status vfs_open(const char *path, uint32_t flags, struct file *file) {
     if ((flags & VFS_OPEN_DIRECTORY) && node->type != VFS_DIR)
         return VFS_NOT_DIRECTORY;
     if ((flags & VFS_OPEN_WRITE) && node->type == VFS_DIR) return VFS_IS_DIRECTORY;
+    node->refs++;
+    *result = node;
+    return VFS_OK;
+}
+
+enum vfs_status vfs_open(const char *path, uint32_t flags, struct file *file) {
+    if (!file) return VFS_INVALID;
+    struct vnode *node;
+    mutex_lock(&namespace_lock);
+    enum vfs_status status = open_locked(path, flags, &node);
+    mutex_unlock(&namespace_lock);
+    if (status != VFS_OK) return status;
+    mutex_lock(&node->data_lock);
     if ((flags & VFS_OPEN_TRUNCATE) && (flags & VFS_OPEN_WRITE)) {
         release_pages(node);
         node->archive = 0;
@@ -357,29 +374,31 @@ enum vfs_status vfs_open(const char *path, uint32_t flags, struct file *file) {
     file->node = node;
     file->flags = flags;
     file->offset = (flags & VFS_OPEN_APPEND) ? node->size : 0;
-    node->refs++;
+    mutex_unlock(&node->data_lock);
     return VFS_OK;
 }
 
 void vfs_close(struct file *file) {
     if (!file || !file->node) return;
     struct vnode *node = file->node;
+    mutex_lock(&namespace_lock);
     if (node->refs) node->refs--;
     if (!node->linked && !node->refs) release_node(node);
+    mutex_unlock(&namespace_lock);
     file->node = 0;
 }
 
 void vfs_file_info(const struct file *file, struct vfs_info *info) {
-    info->size = file->node->size;
-    info->ino = file->node->ino;
-    info->mode = file->node->mode;
-    info->type = file->node->type;
+    struct vnode *node = file->node;
+    mutex_lock(&node->data_lock);
+    info->size = node->size;
+    mutex_unlock(&node->data_lock);
+    info->ino = node->ino;
+    info->mode = node->mode;
+    info->type = node->type;
 }
 
-long vfs_read(struct file *file, void *buffer, size_t length) {
-    if (!file || !file->node || file->node->type != VFS_REG ||
-        !(file->flags & VFS_OPEN_READ))
-        return -1;
+static long read_locked(struct file *file, void *buffer, size_t length) {
     struct vnode *node = file->node;
     if (file->offset >= node->size) return 0;
     uint64_t available = node->size - file->offset;
@@ -400,10 +419,17 @@ long vfs_read(struct file *file, void *buffer, size_t length) {
     return (long)done;
 }
 
-long vfs_write(struct file *file, const void *buffer, size_t length) {
+long vfs_read(struct file *file, void *buffer, size_t length) {
     if (!file || !file->node || file->node->type != VFS_REG ||
-        !(file->flags & VFS_OPEN_WRITE))
+        !(file->flags & VFS_OPEN_READ))
         return -1;
+    mutex_lock(&file->node->data_lock);
+    long result = read_locked(file, buffer, length);
+    mutex_unlock(&file->node->data_lock);
+    return result;
+}
+
+static long write_locked(struct file *file, const void *buffer, size_t length) {
     struct vnode *node = file->node;
     if (file->flags & VFS_OPEN_APPEND) file->offset = node->size;
     if ((uint64_t)length > (uint64_t)INT64_MAX - file->offset) return -1;
@@ -425,28 +451,46 @@ long vfs_write(struct file *file, const void *buffer, size_t length) {
     return (long)done;
 }
 
+long vfs_write(struct file *file, const void *buffer, size_t length) {
+    if (!file || !file->node || file->node->type != VFS_REG ||
+        !(file->flags & VFS_OPEN_WRITE))
+        return -1;
+    mutex_lock(&file->node->data_lock);
+    long result = write_locked(file, buffer, length);
+    mutex_unlock(&file->node->data_lock);
+    return result;
+}
+
 long vfs_seek(struct file *file, int64_t offset, int origin) {
     if (!file || !file->node || file->node->type != VFS_REG) return -1;
+    mutex_lock(&file->node->data_lock);
     int64_t base = origin == 0 ? 0 : origin == 1 ? (int64_t)file->offset :
                    origin == 2 ? (int64_t)file->node->size : -1;
-    if (base < 0 || offset < -base || (offset > 0 && base > INT64_MAX - offset)) return -1;
-    file->offset = (uint64_t)(base + offset);
-    return (long)file->offset;
+    long result = -1;
+    if (base >= 0 && offset >= -base && !(offset > 0 && base > INT64_MAX - offset)) {
+        file->offset = (uint64_t)(base + offset);
+        result = (long)file->offset;
+    }
+    mutex_unlock(&file->node->data_lock);
+    return result;
 }
 
 int vfs_readdir(struct file *file, struct vfs_dirent *entry) {
     if (!file || !file->node || !entry || file->node->type != VFS_DIR) return -1;
+    mutex_lock(&namespace_lock);
     struct vnode *child = file->node->children;
     for (uint64_t i = 0; child && i < file->offset; i++) child = child->next;
-    if (!child) return 0;
-    file->offset++;
-    entry->ino = child->ino;
-    entry->type = child->type;
-    memcpy(entry->name, child->name, str_len(child->name) + 1);
-    return 1;
+    if (child) {
+        file->offset++;
+        entry->ino = child->ino;
+        entry->type = child->type;
+        memcpy(entry->name, child->name, str_len(child->name) + 1);
+    }
+    mutex_unlock(&namespace_lock);
+    return child != 0;
 }
 
-enum vfs_status vfs_mkdir(const char *path, uint32_t mode) {
+static enum vfs_status mkdir_locked(const char *path, uint32_t mode) {
     struct vnode *parent;
     const char *name;
     size_t length;
@@ -457,7 +501,7 @@ enum vfs_status vfs_mkdir(const char *path, uint32_t mode) {
     return VFS_OK;
 }
 
-enum vfs_status vfs_unlink(const char *path, int remove_directory) {
+static enum vfs_status unlink_locked(const char *path, int remove_directory) {
     struct vnode *parent;
     const char *name;
     size_t length;
@@ -472,7 +516,7 @@ enum vfs_status vfs_unlink(const char *path, int remove_directory) {
     return VFS_OK;
 }
 
-enum vfs_status vfs_rename(const char *old_path, const char *new_path) {
+static enum vfs_status rename_locked(const char *old_path, const char *new_path) {
     struct vnode *old_parent, *new_parent;
     const char *old_name, *new_name;
     size_t old_length, new_length;
@@ -502,4 +546,25 @@ enum vfs_status vfs_rename(const char *old_path, const char *new_path) {
     node->name = name;
     attach(new_parent, node);
     return VFS_OK;
+}
+
+enum vfs_status vfs_mkdir(const char *path, uint32_t mode) {
+    mutex_lock(&namespace_lock);
+    enum vfs_status status = mkdir_locked(path, mode);
+    mutex_unlock(&namespace_lock);
+    return status;
+}
+
+enum vfs_status vfs_unlink(const char *path, int remove_directory) {
+    mutex_lock(&namespace_lock);
+    enum vfs_status status = unlink_locked(path, remove_directory);
+    mutex_unlock(&namespace_lock);
+    return status;
+}
+
+enum vfs_status vfs_rename(const char *old_path, const char *new_path) {
+    mutex_lock(&namespace_lock);
+    enum vfs_status status = rename_locked(old_path, new_path);
+    mutex_unlock(&namespace_lock);
+    return status;
 }
