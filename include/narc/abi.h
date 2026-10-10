@@ -58,6 +58,9 @@ enum narc_status {
     NARC_NO_SPACE         = 16,
     NARC_NOT_EMPTY        = 17,
     NARC_BROKEN_PIPE      = 18,
+    NARC_NAME_TOO_LONG    = 19,
+    NARC_CROSS_DEVICE     = 20,
+    NARC_ILLEGAL_SEEK     = 21,
 };
 
 enum narc_signal {
@@ -120,6 +123,8 @@ enum narc_file_type {
     NARC_FILE_REGULAR   = 1,
     NARC_FILE_DIRECTORY = 2,
     NARC_FILE_CHARACTER = 3,
+    NARC_FILE_BLOCK     = 4,
+    NARC_FILE_SYMLINK   = 5,
 };
 
 #define NARC_NAME_MAX 255

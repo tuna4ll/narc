@@ -3,24 +3,26 @@
 #include <kernel/string.h>
 #include <narc/abi.h>
 
-static long vfs_file_read(struct open_file *open, void *buffer, size_t length) {
-    long result = vfs_read(&open->file, buffer, length);
-    return result < 0 ? -NARC_IO_ERROR : result;
+static long vnode_file_read(struct open_file *open, void *buffer, size_t length) {
+    mutex_lock(&open->lock);
+    long result = vfs_read(open->node, open->offset, buffer, length);
+    if (result > 0) open->offset += (uint64_t)result;
+    mutex_unlock(&open->lock);
+    return result;
 }
 
-static long vfs_file_write(struct open_file *open, const void *buffer, size_t length) {
-    long result = vfs_write(&open->file, buffer, length);
-    return result < 0 ? -NARC_IO_ERROR : result;
+static long vnode_file_write(struct open_file *open, const void *buffer, size_t length) {
+    mutex_lock(&open->lock);
+    if (open->flags & VFS_OPEN_APPEND) open->offset = open->node->size;
+    long result = vfs_write(open->node, open->offset, buffer, length);
+    if (result > 0) open->offset += (uint64_t)result;
+    mutex_unlock(&open->lock);
+    return result;
 }
 
-static void vfs_file_release(struct open_file *open) {
-    vfs_close(&open->file);
-}
-
-static const struct file_ops vfs_file_ops = {
-    .read = vfs_file_read,
-    .write = vfs_file_write,
-    .release = vfs_file_release,
+static const struct file_ops vnode_file_ops = {
+    .read = vnode_file_read,
+    .write = vnode_file_write,
 };
 
 struct open_file *file_alloc(const struct file_ops *ops, void *private) {
@@ -29,18 +31,22 @@ struct open_file *file_alloc(const struct file_ops *ops, void *private) {
     open->refs = 1;
     open->ops = ops;
     open->private = private;
+    mutex_init(&open->lock);
     return open;
 }
 
-struct open_file *file_open(const char *path, uint32_t flags, enum vfs_status *status) {
-    struct open_file *open = file_alloc(&vfs_file_ops, 0);
+int file_open(const char *path, uint32_t flags, uint32_t mode, struct open_file **result) {
+    struct vnode *node;
+    int status = vfs_open(path, flags, mode, &node);
+    if (status) return status;
+    struct open_file *open = file_alloc(&vnode_file_ops, 0);
     if (!open) {
-        *status = VFS_NO_SPACE;
-        return 0;
+        vnode_put(node);
+        return -NARC_NO_MEMORY;
     }
-    *status = vfs_open(path, flags, &open->file);
-    if (*status == VFS_OK) return open;
-    kfree(open);
+    open->node = node;
+    open->flags = flags & (VFS_OPEN_READ | VFS_OPEN_WRITE | VFS_OPEN_APPEND);
+    *result = open;
     return 0;
 }
 
@@ -52,19 +58,42 @@ struct open_file *file_get(struct open_file *open) {
 void file_put(struct open_file *open) {
     if (!open || __atomic_sub_fetch(&open->refs, 1, __ATOMIC_ACQ_REL)) return;
     if (open->ops->release) open->ops->release(open);
+    vnode_put(open->node);
     kfree(open);
 }
 
-struct file *file_vfs(struct open_file *open) {
-    return open && open->ops == &vfs_file_ops ? &open->file : 0;
-}
-
 long file_read(struct open_file *open, void *buffer, size_t length) {
+    if (open->node && !(open->flags & VFS_OPEN_READ)) return -NARC_BAD_HANDLE;
     return open->ops->read ? open->ops->read(open, buffer, length) : -NARC_BAD_HANDLE;
 }
 
 long file_write(struct open_file *open, const void *buffer, size_t length) {
+    if (open->node && !(open->flags & VFS_OPEN_WRITE)) return -NARC_BAD_HANDLE;
     return open->ops->write ? open->ops->write(open, buffer, length) : -NARC_BAD_HANDLE;
+}
+
+long file_seek(struct open_file *open, int64_t offset, int origin) {
+    struct vnode *node = open->node;
+    if (!node || (node->type != VFS_REG && node->type != VFS_DIR))
+        return -NARC_ILLEGAL_SEEK;
+    mutex_lock(&open->lock);
+    int64_t base = origin == 0 ? 0 : origin == 1 ? (int64_t)open->offset :
+                   origin == 2 ? (int64_t)node->size : -1;
+    long result = -NARC_INVALID_ARGUMENT;
+    if (base >= 0 && offset >= -base && !(offset > 0 && base > INT64_MAX - offset)) {
+        open->offset = (uint64_t)(base + offset);
+        result = (long)open->offset;
+    }
+    mutex_unlock(&open->lock);
+    return result;
+}
+
+int file_readdir(struct open_file *open, struct vfs_dirent *entry) {
+    if (!open->node) return -NARC_NOT_DIRECTORY;
+    mutex_lock(&open->lock);
+    int result = vfs_readdir(open->node, &open->offset, entry);
+    mutex_unlock(&open->lock);
+    return result;
 }
 
 struct fd_table *fd_table_create(void) {

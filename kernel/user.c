@@ -190,30 +190,28 @@ static int build_stack(struct address_space *space, const struct elf64_ehdr *eh,
     return status;
 }
 
-static int read_at(struct file *file, uint64_t offset, void *buffer, size_t length) {
-    if (vfs_seek(file, (int64_t)offset, 0) < 0) return -1;
-    return vfs_read(file, buffer, length) == (long)length ? 0 : -1;
+static int read_at(struct vnode *node, uint64_t offset, void *buffer, size_t length) {
+    return vfs_read(node, offset, buffer, length) == (long)length ? 0 : -1;
 }
 
-static int load_segment(struct address_space *space, struct file *file,
+static int load_segment(struct address_space *space, struct vnode *node,
                         const struct elf64_phdr *ph) {
-    if (map_range(space, ph->vaddr, ph->vaddr + ph->memsz) != 0 ||
-        vfs_seek(file, (int64_t)ph->offset, 0) < 0)
-        return -1;
-    uint64_t dst = ph->vaddr, left = ph->filesz;
+    if (map_range(space, ph->vaddr, ph->vaddr + ph->memsz) != 0) return -1;
+    uint64_t dst = ph->vaddr, offset = ph->offset, left = ph->filesz;
     while (left) {
         uint64_t phys = vmm_user_phys(space, dst);
         if (!phys) return -1;
         size_t chunk = PAGE_SIZE - (size_t)(dst & (PAGE_SIZE - 1));
         if (chunk > left) chunk = (size_t)left;
-        if (vfs_read(file, phys_to_virt(phys), chunk) != (long)chunk) return -1;
+        if (read_at(node, offset, phys_to_virt(phys), chunk) != 0) return -1;
         dst += chunk;
+        offset += chunk;
         left -= chunk;
     }
     return uaccess_zero(space, ph->vaddr + ph->filesz, (size_t)(ph->memsz - ph->filesz));
 }
 
-static int load_image(struct address_space *space, struct file *file, uint64_t size,
+static int load_image(struct address_space *space, struct vnode *node, uint64_t size,
                       struct elf64_ehdr *eh, const struct elf64_phdr *ph, uint64_t *phdr) {
     *phdr = find_phdr(eh, ph);
     if (!*phdr) return -1;
@@ -223,7 +221,7 @@ static int load_image(struct address_space *space, struct file *file, uint64_t s
             ph[i].filesz > size - ph[i].offset || ph[i].vaddr < USER_MIN ||
             ph[i].vaddr >= USER_IMAGE_END || ph[i].memsz > USER_IMAGE_END - ph[i].vaddr)
             return -1;
-        if (ph[i].memsz && load_segment(space, file, &ph[i]) != 0) return -1;
+        if (ph[i].memsz && load_segment(space, node, &ph[i]) != 0) return -1;
     }
     for (uint16_t i = 0; i < eh->phnum; i++) {
         if (ph[i].type != PT_LOAD || !ph[i].memsz) continue;
@@ -236,15 +234,14 @@ static int load_image(struct address_space *space, struct file *file, uint64_t s
 
 static int load(struct address_space *space, const char *path, const struct strings *argv,
                 const struct strings *envp, uint64_t *entry, uint64_t *stack) {
-    struct file file;
-    if (vfs_open(path, VFS_OPEN_READ, &file) != VFS_OK) return -1;
-    struct vfs_info info;
-    vfs_file_info(&file, &info);
+    struct vnode *node;
+    if (vfs_lookup(path, &node) != 0) return -1;
+    uint64_t size = node->size;
     struct elf64_ehdr eh;
     struct elf64_phdr *ph = 0;
     uint64_t phdr;
     int status = -1;
-    if (info.type != VFS_REG || info.size < sizeof(eh) || read_at(&file, 0, &eh, sizeof(eh)) != 0)
+    if (node->type != VFS_REG || size < sizeof(eh) || read_at(node, 0, &eh, sizeof(eh)) != 0)
         goto done;
     if (eh.ident[0] != 0x7f || eh.ident[1] != 'E' || eh.ident[2] != 'L' ||
         eh.ident[3] != 'F' || eh.ident[4] != 2 || eh.ident[5] != 1 ||
@@ -252,17 +249,17 @@ static int load(struct address_space *space, const char *path, const struct stri
         eh.phentsize != sizeof(struct elf64_phdr) || !eh.phnum)
         goto done;
     uint64_t ph_bytes = (uint64_t)eh.phnum * eh.phentsize;
-    if (eh.phoff > info.size || ph_bytes > info.size - eh.phoff) goto done;
+    if (eh.phoff > size || ph_bytes > size - eh.phoff) goto done;
     ph = kmalloc((size_t)ph_bytes);
-    if (!ph || read_at(&file, eh.phoff, ph, (size_t)ph_bytes) != 0 ||
-        load_image(space, &file, info.size, &eh, ph, &phdr) != 0 ||
+    if (!ph || read_at(node, eh.phoff, ph, (size_t)ph_bytes) != 0 ||
+        load_image(space, node, size, &eh, ph, &phdr) != 0 ||
         build_stack(space, &eh, phdr, argv, envp, stack) != 0)
         goto done;
     *entry = eh.entry;
     status = 0;
 done:
     kfree(ph);
-    vfs_close(&file);
+    vnode_put(node);
     return status;
 }
 

@@ -21,6 +21,9 @@ static int status_errno(uint32_t status) {
     case NARC_NO_SPACE:         return ENOSPC;
     case NARC_NOT_EMPTY:        return ENOTEMPTY;
     case NARC_BROKEN_PIPE:      return EPIPE;
+    case NARC_NAME_TOO_LONG:    return ENAMETOOLONG;
+    case NARC_CROSS_DEVICE:     return EXDEV;
+    case NARC_ILLEGAL_SEEK:     return ESPIPE;
     default:                    return EIO;
     }
 }

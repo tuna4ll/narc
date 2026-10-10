@@ -20,6 +20,9 @@
 #define ENOSPC 28
 #define ENOTEMPTY 39
 #define EPIPE  32
+#define EXDEV  18
+#define ESPIPE 29
+#define ENAMETOOLONG 36
 
 int *__errno_location(void);
 
