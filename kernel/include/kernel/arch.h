@@ -4,8 +4,9 @@
 
 #if defined(__x86_64__)
 struct task_frame {
-    uint64_t r15, r14, r13, r12, rbp, rbx;
-    uint64_t rax, rdi, rsi, rdx, r10, r8, r9;
+    uint64_t r15, r14, r13, r12, rbp, rbx, r11, r10, r9, r8;
+    uint64_t rax, rcx, rdx, rsi, rdi;
+    uint64_t vector, error;
     uint64_t rip, cs, rflags, rsp, ss;
 };
 #define ARCH_STATE_SIZE 512

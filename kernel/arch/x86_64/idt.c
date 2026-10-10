@@ -18,16 +18,9 @@ struct __attribute__((packed)) idtr {
 };
 
 static struct idt_entry idt[256];
+extern const uint64_t interrupt_stubs[IDT_VECTORS];
 
-extern void exception_ud(void);
-extern void exception_df(void);
-extern void exception_np(void);
-extern void exception_ss(void);
-extern void exception_gp(void);
-extern void exception_pf(void);
-
-void idt_set_gate(unsigned vector, void (*handler)(void)) {
-    uint64_t addr = (uint64_t)(uintptr_t)handler;
+static void set_gate(unsigned vector, uint64_t addr) {
     idt[vector] = (struct idt_entry){
         .offset_low = addr,
         .selector = 0x08,
@@ -39,12 +32,8 @@ void idt_set_gate(unsigned vector, void (*handler)(void)) {
 
 void idt_init(void) {
     memset(idt, 0, sizeof(idt));
-    idt_set_gate(6, exception_ud);
-    idt_set_gate(8, exception_df);
-    idt_set_gate(11, exception_np);
-    idt_set_gate(12, exception_ss);
-    idt_set_gate(13, exception_gp);
-    idt_set_gate(14, exception_pf);
+    for (unsigned vector = 0; vector < IDT_VECTORS; vector++)
+        set_gate(vector, interrupt_stubs[vector]);
 
     struct idtr ptr = {
         .limit = sizeof(idt) - 1,

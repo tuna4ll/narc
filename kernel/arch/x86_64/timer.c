@@ -7,8 +7,9 @@
 
 #define IA32_APIC_BASE 0x1bu
 
-extern void timer_interrupt(void);
 static volatile uint32_t *lapic;
+
+static void timer_dispatch(struct task_frame *frame);
 
 static uint64_t rdmsr(uint32_t msr) {
     uint32_t lo, hi;
@@ -17,7 +18,7 @@ static uint64_t rdmsr(uint32_t msr) {
 }
 
 void timer_init(void) {
-    idt_set_gate(32, timer_interrupt);
+    idt_set_handler(32, timer_dispatch);
     uint64_t base = rdmsr(IA32_APIC_BASE);
     uint64_t phys = base & 0xfffff000ULL;
     lapic = phys_to_virt(phys);
@@ -36,8 +37,8 @@ uint8_t lapic_id(void) {
     return (uint8_t)(lapic[0x20 / 4] >> 24);
 }
 
-void timer_dispatch(struct task_frame *frame) {
+static void timer_dispatch(struct task_frame *frame) {
+    (void)frame;
     lapic_eoi();
     sched_tick();
-    if (arch_frame_from_user(frame)) sched_user_return();
 }
