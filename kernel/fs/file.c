@@ -1,13 +1,16 @@
 #include <kernel/file.h>
 #include <kernel/heap.h>
 #include <kernel/string.h>
+#include <narc/abi.h>
 
 static long vfs_file_read(struct open_file *open, void *buffer, size_t length) {
-    return vfs_read(&open->file, buffer, length);
+    long result = vfs_read(&open->file, buffer, length);
+    return result < 0 ? -NARC_IO_ERROR : result;
 }
 
 static long vfs_file_write(struct open_file *open, const void *buffer, size_t length) {
-    return vfs_write(&open->file, buffer, length);
+    long result = vfs_write(&open->file, buffer, length);
+    return result < 0 ? -NARC_IO_ERROR : result;
 }
 
 static void vfs_file_release(struct open_file *open) {
@@ -57,11 +60,11 @@ struct file *file_vfs(struct open_file *open) {
 }
 
 long file_read(struct open_file *open, void *buffer, size_t length) {
-    return open->ops->read ? open->ops->read(open, buffer, length) : -1;
+    return open->ops->read ? open->ops->read(open, buffer, length) : -NARC_BAD_HANDLE;
 }
 
 long file_write(struct open_file *open, const void *buffer, size_t length) {
-    return open->ops->write ? open->ops->write(open, buffer, length) : -1;
+    return open->ops->write ? open->ops->write(open, buffer, length) : -NARC_BAD_HANDLE;
 }
 
 struct fd_table *fd_table_create(void) {

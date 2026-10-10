@@ -19,6 +19,7 @@
 #define EEXIST 17
 #define ENOSPC 28
 #define ENOTEMPTY 39
+#define EPIPE  32
 
 int *__errno_location(void);
 

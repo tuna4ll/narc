@@ -54,6 +54,7 @@ enum narc_status {
     NARC_EXISTS           = 15,
     NARC_NO_SPACE         = 16,
     NARC_NOT_EMPTY        = 17,
+    NARC_BROKEN_PIPE      = 18,
 };
 
 enum narc_open_flags {

@@ -20,6 +20,7 @@ static int status_errno(uint32_t status) {
     case NARC_EXISTS:           return EEXIST;
     case NARC_NO_SPACE:         return ENOSPC;
     case NARC_NOT_EMPTY:        return ENOTEMPTY;
+    case NARC_BROKEN_PIPE:      return EPIPE;
     default:                    return EIO;
     }
 }

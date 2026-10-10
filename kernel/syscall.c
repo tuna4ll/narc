@@ -98,12 +98,12 @@ static struct kernel_result read_file(struct open_file *open, uint64_t buffer,
     while (done < length) {
         size_t want = length - done > sizeof(chunk) ? sizeof(chunk) : (size_t)(length - done);
         long got = file_read(open, chunk, want);
-        if (got < 0) return done ? result_ok(done) : result_error(NARC_IO_ERROR);
+        if (got < 0) return done ? result_ok(done) : result_error((uint32_t)-got);
         if (!got) break;
         if (copy_to_user(buffer + done, chunk, (size_t)got) != 0)
             return result_error(NARC_BAD_ADDRESS);
         done += (uint64_t)got;
-        if ((size_t)got < want) break;
+        if (!file || (size_t)got < want) break;
     }
     return result_ok(done);
 }
@@ -130,7 +130,7 @@ static struct kernel_result write_file(struct open_file *open, uint64_t buffer,
         size_t chunk = PAGE_SIZE - (size_t)(ptr & (PAGE_SIZE - 1));
         if ((uint64_t)chunk > length - done) chunk = (size_t)(length - done);
         long wrote = file_write(open, phys_to_virt(phys), chunk);
-        if (wrote < 0) return done ? result_ok(done) : result_error(NARC_IO_ERROR);
+        if (wrote < 0) return done ? result_ok(done) : result_error((uint32_t)-wrote);
         done += (uint64_t)wrote;
         if ((size_t)wrote < chunk) break;
     }
