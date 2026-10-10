@@ -1,9 +1,17 @@
 #include <kernel/arch.h>
 #include <kernel/string.h>
 #include <kernel/syscall.h>
+#include <kernel/mm.h>
 #include <kernel/sched.h>
+#include <kernel/serial.h>
+
+#define PLIC_BASE 0x0c000000ULL
+#define PLIC_CONTEXT 1
+#define SERIAL_IRQ 10
 
 extern char riscv_trap_entry[];
+
+static volatile uint32_t *plic;
 
 static uint64_t timer_ticks = 100000;
 
@@ -83,12 +91,40 @@ void arch_set_kernel_stack(uint64_t top) {
     (void)top;
 }
 
+static volatile uint32_t *plic_reg(uint64_t offset) {
+    return plic + offset / sizeof(uint32_t);
+}
+
+void arch_serial_irq_init(void) {
+    static const uint64_t pages[] = { 0, 0x2000, 0x200000 + PLIC_CONTEXT * 0x1000 };
+    plic = phys_to_virt(PLIC_BASE);
+    for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); i++)
+        vmm_map_kernel((uint64_t)(uintptr_t)plic + pages[i], PLIC_BASE + pages[i],
+                       VMM_WRITE | VMM_DEVICE);
+    *plic_reg(SERIAL_IRQ * 4) = 1;
+    *plic_reg(0x2000 + PLIC_CONTEXT * 0x80) |= 1U << SERIAL_IRQ;
+    *plic_reg(0x200000 + PLIC_CONTEXT * 0x1000) = 0;
+    __asm__ volatile ("csrs sie, %0" : : "r"(1ULL << 9));
+}
+
+static void external_interrupt(void) {
+    volatile uint32_t *claim = plic_reg(0x200004 + PLIC_CONTEXT * 0x1000);
+    uint32_t irq = *claim;
+    if (irq == SERIAL_IRQ) serial_interrupt();
+    if (irq) *claim = irq;
+}
+
 void riscv_trap(struct task_frame *frame) {
     uint64_t cause;
     __asm__ volatile ("csrr %0, scause" : "=r"(cause));
     if (cause == ((1ULL << 63) | 5)) {
         timer_reset();
         sched_tick();
+        if (arch_frame_from_user(frame)) sched_user_return();
+        return;
+    }
+    if (cause == ((1ULL << 63) | 9)) {
+        external_interrupt();
         if (arch_frame_from_user(frame)) sched_user_return();
         return;
     }

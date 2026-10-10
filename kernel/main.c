@@ -4,6 +4,7 @@
 #include <kernel/mm.h>
 #include <kernel/sched.h>
 #include <kernel/serial.h>
+#include <kernel/tty.h>
 #include <kernel/user.h>
 #include <kernel/vfs.h>
 #include <kernel/console.h>
@@ -73,6 +74,7 @@ void _start(void) {
 
     console_puts("[kernel] ring 0 initialized\n");
 
+    tty_init();
     user_start();
     sched_idle();
 }

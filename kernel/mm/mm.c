@@ -6,6 +6,8 @@
 #define PTE_PRESENT (1ULL << 0)
 #define PTE_WRITE   (1ULL << 1)
 #define PTE_USER    (1ULL << 2)
+#define PTE_PWT     (1ULL << 3)
+#define PTE_PCD     (1ULL << 4)
 #define PTE_HUGE    (1ULL << 7)
 #define ADDR_MASK   0x000ffffffffff000ULL
 #endif
@@ -127,6 +129,7 @@ static int vmm_map(struct address_space *space, uint64_t virt, uint64_t phys, ui
     uint64_t bits = PTE_PRESENT;
     if (user) bits |= PTE_USER;
     if (flags & VMM_WRITE) bits |= PTE_WRITE;
+    if (flags & VMM_DEVICE) bits |= PTE_PWT | PTE_PCD;
     *pte = (phys & ADDR_MASK) | bits;
     if (read_cr3() == space->root) __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
     return 0;

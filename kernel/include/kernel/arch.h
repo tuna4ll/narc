@@ -45,6 +45,7 @@ uint64_t arch_context_init(uint64_t stack_top, void (*entry)(void));
 void arch_context_switch(uint64_t *prev, uint64_t next);
 void arch_set_kernel_stack(uint64_t top);
 void arch_enter_user(struct task_frame *frame) __attribute__((noreturn));
+void arch_serial_irq_init(void);
 
 #if defined(__x86_64__)
 static inline unsigned long arch_irq_save(void) {

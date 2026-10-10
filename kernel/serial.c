@@ -1,5 +1,6 @@
 #include <kernel/mm.h>
 #include <kernel/serial.h>
+#include <kernel/tty.h>
 
 #if defined(__x86_64__)
 #include <kernel/io.h>
@@ -7,6 +8,9 @@
 #elif defined(__aarch64__)
 #define UART_BASE 0x09000000ULL
 static volatile uint32_t *uart;
+#else
+#define UART_BASE 0x10000000ULL
+static volatile uint8_t *uart;
 #endif
 
 void serial_init(void) {
@@ -19,6 +23,10 @@ void serial_init(void) {
     outb(COM1 + 2, 0xc7);
     outb(COM1 + 4, 0x0b);
 #elif defined(__aarch64__)
+    vmm_map_kernel((uint64_t)(uintptr_t)phys_to_virt(UART_BASE), UART_BASE,
+                   VMM_WRITE | VMM_DEVICE);
+    uart = phys_to_virt(UART_BASE);
+#else
     vmm_map_kernel((uint64_t)(uintptr_t)phys_to_virt(UART_BASE), UART_BASE,
                    VMM_WRITE | VMM_DEVICE);
     uart = phys_to_virt(UART_BASE);
@@ -39,20 +47,37 @@ void serial_putc(char c) {
 #endif
 }
 
-char serial_getc(void) {
+int serial_try_getc(char *c) {
 #if defined(__x86_64__)
-    while (!(inb(COM1 + 5) & 1)) {}
-    return (char)inb(COM1);
+    if (!(inb(COM1 + 5) & 1)) return 0;
+    *c = (char)inb(COM1);
 #elif defined(__aarch64__)
-    while (uart[6] & (1U << 4)) {}
-    return (char)uart[0];
+    if (uart[6] & (1U << 4)) return 0;
+    *c = (char)uart[0];
 #else
-    for (;;) {
-        register long a0 __asm__("a0");
-        register uint64_t a7 __asm__("a7") = 2;
-        __asm__ volatile ("ecall" : "=r"(a0) : "r"(a7) : "memory");
-        if (a0 >= 0) return (char)a0;
-    }
+    if (!(uart[5] & 1)) return 0;
+    *c = (char)uart[0];
+#endif
+    return 1;
+}
+
+void serial_rx_enable(void) {
+#if defined(__x86_64__)
+    outb(COM1 + 1, 0x01);
+    outb(COM1 + 4, 0x0b);
+#elif defined(__aarch64__)
+    uart[0x38 / 4] |= (1U << 4) | (1U << 6);
+#else
+    uart[1] = 0x01;
+    uart[4] |= 0x08;
+#endif
+}
+
+void serial_interrupt(void) {
+    char c;
+    while (serial_try_getc(&c)) tty_input(c);
+#if defined(__aarch64__)
+    uart[0x44 / 4] = (1U << 4) | (1U << 6);
 #endif
 }
 

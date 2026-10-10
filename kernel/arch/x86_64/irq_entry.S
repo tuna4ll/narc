@@ -1,9 +1,9 @@
 .section .text
-.global timer_interrupt
-.type timer_interrupt, @function
-.extern timer_dispatch
 
-timer_interrupt:
+.macro IRQ_ENTRY name, handler
+.global \name
+.type \name, @function
+\name:
     pushq %r9
     pushq %r8
     pushq %r10
@@ -19,7 +19,7 @@ timer_interrupt:
     pushq %r15
     cld
     movq %rsp, %rdi
-    call timer_dispatch
+    call \handler
     popq %r15
     popq %r14
     popq %r13
@@ -34,4 +34,8 @@ timer_interrupt:
     popq %r8
     popq %r9
     iretq
-.size timer_interrupt, .-timer_interrupt
+.size \name, .-\name
+.endm
+
+IRQ_ENTRY timer_interrupt, timer_dispatch
+IRQ_ENTRY serial_interrupt_entry, serial_dispatch

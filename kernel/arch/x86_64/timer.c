@@ -28,8 +28,16 @@ void timer_init(void) {
     lapic[0x380 / 4] = 10000000;
 }
 
-void timer_dispatch(struct task_frame *frame) {
+void lapic_eoi(void) {
     lapic[0xb0 / 4] = 0;
+}
+
+uint8_t lapic_id(void) {
+    return (uint8_t)(lapic[0x20 / 4] >> 24);
+}
+
+void timer_dispatch(struct task_frame *frame) {
+    lapic_eoi();
     sched_tick();
     if (arch_frame_from_user(frame)) sched_user_return();
 }

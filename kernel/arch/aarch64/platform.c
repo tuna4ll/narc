@@ -4,10 +4,12 @@
 #include <kernel/string.h>
 #include <kernel/syscall.h>
 #include <kernel/sched.h>
+#include <kernel/serial.h>
 
 #define GICD_BASE 0x08000000ULL
 #define GICC_BASE 0x08010000ULL
 #define TIMER_IRQ 27
+#define SERIAL_IRQ 33
 
 extern char aarch64_vectors[];
 
@@ -120,6 +122,13 @@ void arch_set_kernel_stack(uint64_t top) {
     (void)top;
 }
 
+void arch_serial_irq_init(void) {
+    volatile uint8_t *bytes = (volatile uint8_t *)gicd;
+    bytes[0x400 + SERIAL_IRQ] = 0xa0;
+    bytes[0x800 + SERIAL_IRQ] = 1;
+    gicd[0x100 / 4 + SERIAL_IRQ / 32] = 1U << (SERIAL_IRQ % 32);
+}
+
 void aarch64_sync(struct task_frame *frame) {
     uint64_t esr, far;
     if (current_el() == 2) __asm__ volatile ("mrs %0, esr_el2; mrs %1, far_el2" : "=r"(esr), "=r"(far));
@@ -140,9 +149,12 @@ void aarch64_sync(struct task_frame *frame) {
 
 void aarch64_irq(struct task_frame *frame) {
     uint32_t irq = gicc[0x0c / 4] & 0x3ff;
+    if (irq >= 1020) return;
     if (irq == TIMER_IRQ) {
         timer_reset();
         sched_tick();
+    } else if (irq == SERIAL_IRQ) {
+        serial_interrupt();
     }
     gicc[0x10 / 4] = irq;
     if (arch_frame_from_user(frame)) sched_user_return();
