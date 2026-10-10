@@ -30,6 +30,9 @@ enum narc_syscall {
     NARC_SYS_UNLINK    = 0x0108,
     NARC_SYS_RMDIR     = 0x0109,
     NARC_SYS_RENAME    = 0x010a,
+    NARC_SYS_PIPE      = 0x010b,
+    NARC_SYS_DUP       = 0x010c,
+    NARC_SYS_DUP2      = 0x010d,
 
     NARC_SYS_MAP       = 0x0200,
     NARC_SYS_UNMAP     = 0x0201,

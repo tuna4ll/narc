@@ -29,6 +29,9 @@ narc_result_t narc_unlink(const char *path, size_t path_length);
 narc_result_t narc_rmdir(const char *path, size_t path_length);
 narc_result_t narc_rename(const char *old_path, size_t old_length,
                           const char *new_path, size_t new_length);
+narc_result_t narc_pipe(int32_t fds[2]);
+narc_result_t narc_dup(int fd, int minimum);
+narc_result_t narc_dup2(int fd, int target);
 
 narc_result_t narc_map(size_t length, uint32_t flags);
 narc_result_t narc_unmap(void *address, size_t length);

@@ -1,6 +1,7 @@
 #include <kernel/file.h>
 #include <kernel/heap.h>
 #include <kernel/mm.h>
+#include <kernel/pipe.h>
 #include <kernel/sched.h>
 #include <kernel/syscall.h>
 #include <kernel/task.h>
@@ -286,6 +287,40 @@ static struct kernel_result handle_read_dir(uint64_t fd, uint64_t address) {
     return result;
 }
 
+static struct kernel_result handle_pipe(uint64_t address) {
+    struct open_file *read_end, *write_end;
+    if (!vmm_user_range_ok(vmm_space_current(), address, 2 * sizeof(int32_t), 1))
+        return result_error(NARC_BAD_ADDRESS);
+    if (pipe_create(&read_end, &write_end) != 0) return result_error(NARC_NO_MEMORY);
+    struct fd_table *table = task_files();
+    int32_t fds[2] = { fd_install(table, read_end, 0), -1 };
+    if (fds[0] >= 0) fds[1] = fd_install(table, write_end, 0);
+    if (fds[1] < 0) {
+        if (fds[0] >= 0) fd_close(table, fds[0]);
+        else file_put(read_end);
+        file_put(write_end);
+        return result_error(NARC_NO_MEMORY);
+    }
+    if (copy_to_user(address, fds, sizeof(fds)) != 0) {
+        fd_close(table, fds[0]);
+        fd_close(table, fds[1]);
+        return result_error(NARC_BAD_ADDRESS);
+    }
+    return result_ok(0);
+}
+
+static struct kernel_result handle_dup(uint64_t fd, uint64_t minimum) {
+    if (minimum > INT32_MAX) return result_error(NARC_INVALID_ARGUMENT);
+    int result = fd_dup(task_files(), (int)fd, (int)minimum);
+    return result < 0 ? result_error(NARC_BAD_HANDLE) : result_ok((uint64_t)result);
+}
+
+static struct kernel_result handle_dup2(uint64_t fd, uint64_t target) {
+    if (target > INT32_MAX) return result_error(NARC_BAD_HANDLE);
+    int result = fd_dup2(task_files(), (int)fd, (int)target);
+    return result < 0 ? result_error(NARC_BAD_HANDLE) : result_ok((uint64_t)result);
+}
+
 static uint64_t page_align(uint64_t value) {
     if (value > UINT64_MAX - (PAGE_SIZE - 1)) return 0;
     return (value + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
@@ -424,6 +459,15 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return_result(frame, handle_rename(a1, a2, a3, a4));
         return;
     }
+    case NARC_SYS_PIPE:
+        return_result(frame, handle_pipe(a1));
+        return;
+    case NARC_SYS_DUP:
+        return_result(frame, handle_dup(a1, a2));
+        return;
+    case NARC_SYS_DUP2:
+        return_result(frame, handle_dup2(a1, a2));
+        return;
     case NARC_SYS_MAP:
         return_result(frame, handle_map(a1, a2));
         return;
