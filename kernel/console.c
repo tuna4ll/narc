@@ -1,6 +1,7 @@
 #include <kernel/font8x16.h>
 #include <kernel/serial.h>
 #include <kernel/console.h>
+#include <kernel/spinlock.h>
 #include <stdint.h>
 
 #define FONT_WIDTH 8ULL
@@ -13,6 +14,7 @@ static uint64_t cursor_col;
 static uint64_t cursor_row;
 static uint32_t fg = 0x00e6e6e6u;
 static uint32_t bg = 0x00000000u;
+static struct spinlock console_lock = SPINLOCK_INIT;
 
 static void console_clear(void);
 
@@ -138,11 +140,15 @@ static void console_putc(char c) {
 }
 
 void console_write(const char *s, size_t n) {
+    unsigned long flags = spin_lock_irqsave(&console_lock);
     for (size_t i = 0; i < n; i++) console_putc(s[i]);
+    spin_unlock_irqrestore(&console_lock, flags);
 }
 
 void console_puts(const char *s) {
+    unsigned long flags = spin_lock_irqsave(&console_lock);
     while (*s) console_putc(*s++);
+    spin_unlock_irqrestore(&console_lock, flags);
 }
 
 uint16_t console_cols(void) {
