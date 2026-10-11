@@ -17,6 +17,7 @@ static struct wait_queue input_wait = WAIT_QUEUE_INIT;
 static struct mutex read_lock = MUTEX_INIT;
 static char line[TTY_LINE];
 static size_t line_pos, line_count;
+static int line_ready;
 
 void tty_init(void) {
     serial_rx_enable();
@@ -42,11 +43,11 @@ static int pop_input(char *c) {
     return available;
 }
 
-static void read_line(void) {
-    line_pos = line_count = 0;
+static int read_line(void) {
     while (line_count < sizeof(line)) {
         char c;
-        wait_event(&input_wait, pop_input(&c));
+        int status = wait_event_interruptible(&input_wait, pop_input(&c));
+        if (status) return status;
         if (c == '\r') c = '\n';
         if (c == '\b' || c == 127) {
             if (line_count) {
@@ -59,15 +60,25 @@ static void read_line(void) {
         console_write(&c, 1);
         if (c == '\n') break;
     }
+    return 0;
 }
 
 static long tty_read(struct open_file *open, void *buffer, size_t length) {
     (void)open;
     mutex_lock(&read_lock);
-    if (line_pos == line_count) read_line();
+    if (!line_ready) {
+        int status = read_line();
+        if (status) {
+            mutex_unlock(&read_lock);
+            return status;
+        }
+        line_ready = 1;
+        line_pos = 0;
+    }
     size_t done = length < line_count - line_pos ? length : line_count - line_pos;
     memcpy(buffer, line + line_pos, done);
     line_pos += done;
+    if (line_pos == line_count) line_ready = line_count = 0;
     mutex_unlock(&read_lock);
     return (long)done;
 }

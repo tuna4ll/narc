@@ -2,11 +2,15 @@
 #include <kernel/cpu.h>
 #include <kernel/gdt.h>
 #include <kernel/idt.h>
+#include <kernel/signal.h>
 #include <kernel/string.h>
 #include <kernel/syscall.h>
 #include <kernel/timer.h>
+#include <kernel/uaccess.h>
 
 #define IA32_FS_BASE 0xc0000100u
+#define USER_END 0x0000800000000000ULL
+#define USER_FLAGS 0x240dd5ULL
 
 extern uint64_t syscall_kernel_rsp;
 
@@ -39,8 +43,14 @@ void arch_task_set_entry(struct task_frame *frame, uint64_t pc, uint64_t sp) {
     frame->rsp = sp;
 }
 
+static uint32_t mxcsr_mask;
+
 void arch_task_state_init(void *state) {
     __asm__ volatile ("fninit; fxsave64 %0" : "=m"(*(uint8_t (*)[ARCH_STATE_SIZE])state));
+    if (!mxcsr_mask) {
+        uint32_t mask = *(uint32_t *)((uint8_t *)state + 28);
+        mxcsr_mask = mask ? mask : 0xffbf;
+    }
 }
 
 void arch_task_state_save(void *state) {
@@ -68,6 +78,47 @@ void arch_syscall_return(struct task_frame *frame, uint64_t value) {
 void arch_syscall_return2(struct task_frame *frame, uint64_t value, uint64_t status) {
     frame->rax = value;
     frame->rdx = status;
+}
+
+uint64_t arch_syscall_status(const struct task_frame *frame) {
+    return frame->rdx;
+}
+
+void arch_syscall_restart(struct task_frame *frame, const uint64_t saved[4]) {
+    frame->rax = saved[0];
+    frame->rdx = saved[3];
+    frame->rip -= 2;
+}
+
+uint64_t arch_frame_sp(const struct task_frame *frame) {
+    return frame->rsp;
+}
+
+int arch_signal_enter(struct task_frame *frame, uint64_t handler, uint64_t sp,
+                      uint64_t restorer, uint64_t arg0, uint64_t arg1, uint64_t arg2) {
+    struct address_space *space = vmm_space_current();
+    uint64_t slot = sp - sizeof(uint64_t);
+    if (!vmm_user_range_ok(space, slot, sizeof(uint64_t), 1) ||
+        uaccess_write(space, slot, &restorer, sizeof(restorer)) != 0)
+        return -1;
+    frame->rsp = slot;
+    frame->rip = handler;
+    frame->rdi = arg0;
+    frame->rsi = arg1;
+    frame->rdx = arg2;
+    frame->rax = 0;
+    frame->rflags &= ~0x500ULL;
+    return 0;
+}
+
+int arch_frame_sanitize(struct task_frame *frame, void *state) {
+    if (frame->rip >= USER_END) return -1;
+    frame->cs = 0x23;
+    frame->ss = 0x1b;
+    frame->rflags = (frame->rflags & USER_FLAGS) | 0x202;
+    frame->vector = frame->error = 0;
+    *(uint32_t *)((uint8_t *)state + 24) &= mxcsr_mask;
+    return 0;
 }
 
 int arch_frame_from_user(const struct task_frame *frame) {

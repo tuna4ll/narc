@@ -42,6 +42,13 @@ enum narc_syscall {
 
     NARC_SYS_CLOCK_GET = 0x0300,
     NARC_SYS_SLEEP     = 0x0301,
+
+    NARC_SYS_KILL        = 0x0400,
+    NARC_SYS_SIGACTION   = 0x0401,
+    NARC_SYS_SIGMASK     = 0x0402,
+    NARC_SYS_SIGPENDING  = 0x0403,
+    NARC_SYS_SIGSUSPEND  = 0x0404,
+    NARC_SYS_SIGRETURN   = 0x0405,
 };
 
 enum narc_status {
@@ -68,6 +75,9 @@ enum narc_status {
     NARC_CROSS_DEVICE     = 20,
     NARC_ILLEGAL_SEEK     = 21,
     NARC_OUT_OF_RANGE     = 22,
+    NARC_INTERRUPTED      = 23,
+    NARC_NO_PROCESS       = 24,
+    NARC_NOT_PERMITTED    = 25,
 };
 
 enum narc_signal {
@@ -104,6 +114,51 @@ enum narc_signal {
     NARC_SIGSYS    = 31,
     NARC_NSIG      = 32,
 };
+
+#define NARC_SIG_DFL UINT64_C(0)
+#define NARC_SIG_IGN UINT64_C(1)
+
+enum narc_signal_flags {
+    NARC_SA_NOCLDSTOP = 0x00000001u,
+    NARC_SA_NOCLDWAIT = 0x00000002u,
+    NARC_SA_SIGINFO   = 0x00000004u,
+    NARC_SA_RESTART   = 0x10000000u,
+    NARC_SA_NODEFER   = 0x40000000u,
+    NARC_SA_RESETHAND = 0x80000000u,
+};
+
+enum narc_signal_mask_how {
+    NARC_SIG_BLOCK   = 0,
+    NARC_SIG_UNBLOCK = 1,
+    NARC_SIG_SETMASK = 2,
+};
+
+enum narc_signal_code {
+    NARC_SI_USER    = 0,
+    NARC_SI_KERNEL  = 0x80,
+    NARC_CLD_EXITED = 1,
+    NARC_CLD_KILLED = 2,
+    NARC_CLD_DUMPED = 3,
+    NARC_CLD_TRAPPED = 4,
+    NARC_CLD_STOPPED = 5,
+    NARC_CLD_CONTINUED = 6,
+};
+
+typedef struct narc_sigaction {
+    uint64_t handler;
+    uint64_t flags;
+    uint64_t restorer;
+    uint64_t mask;
+} narc_sigaction_t;
+
+typedef struct narc_siginfo {
+    int32_t signo;
+    int32_t code;
+    int32_t pid;
+    int32_t status;
+    uint64_t address;
+    uint64_t reserved;
+} narc_siginfo_t;
 
 enum narc_open_flags {
     NARC_OPEN_READ      = 1u << 0,

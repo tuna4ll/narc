@@ -83,9 +83,16 @@ void sched_wake(struct task *task) {
     spin_unlock_irqrestore(&rq_lock, flags);
 }
 
-void sched_sleep_prepare(void) {
+void sched_sleep_prepare(int interruptible) {
     unsigned long flags = spin_lock_irqsave(&rq_lock);
     current_task->state = TASK_SLEEPING;
+    current_task->interruptible = interruptible;
+    spin_unlock_irqrestore(&rq_lock, flags);
+}
+
+void sched_wake_interruptible(struct task *task) {
+    unsigned long flags = spin_lock_irqsave(&rq_lock);
+    if (task->state == TASK_SLEEPING && task->interruptible) make_runnable(task);
     spin_unlock_irqrestore(&rq_lock, flags);
 }
 

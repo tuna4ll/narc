@@ -1,7 +1,7 @@
 #include <kernel/arch.h>
 #include <kernel/console.h>
 #include <kernel/idt.h>
-#include <kernel/sched.h>
+#include <kernel/signal.h>
 #include <kernel/serial.h>
 #include <kernel/task.h>
 #include <narc/abi.h>
@@ -54,11 +54,11 @@ static void kernel_fault(struct task_frame *frame) {
 void x86_interrupt(struct task_frame *frame) {
     if (frame->vector < 32) {
         if (!arch_frame_from_user(frame)) kernel_fault(frame);
-        task_kill_fault(fault_signal(frame->vector));
+        signal_force(fault_signal(frame->vector), frame->vector == 14 ? read_cr2() : frame->rip);
+    } else if (handlers[frame->vector]) {
+        handlers[frame->vector](frame);
     }
-    interrupt_handler_t handler = handlers[frame->vector];
-    if (handler) handler(frame);
-    if (arch_frame_from_user(frame)) sched_user_return();
+    if (arch_frame_from_user(frame)) user_return(frame);
 }
 
 int x86_syscall_sysret(const struct task_frame *frame) {

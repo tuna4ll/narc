@@ -60,18 +60,36 @@ static void task_destroy(struct task *task) {
 }
 
 static void task_publish(struct task *task) {
-    spin_lock(&task_lock);
+    unsigned long flags = spin_lock_irqsave(&task_lock);
     task->pid = alloc_pid();
     struct task **link = &task_list;
     while (*link) link = &(*link)->next;
     *link = task;
-    spin_unlock(&task_lock);
+    spin_unlock_irqrestore(&task_lock, flags);
 }
 
 static void task_unlink(struct task *task) {
     struct task **link = &task_list;
     while (*link && *link != task) link = &(*link)->next;
     if (*link) *link = task->next;
+}
+
+static void reap_detached(void) {
+    for (;;) {
+        struct task *zombie = 0;
+        unsigned long flags = spin_lock_irqsave(&task_lock);
+        for (struct task *task = task_list; task; task = task->next) {
+            if (!task->exited || !task->detached ||
+                __atomic_load_n(&task->on_cpu, __ATOMIC_ACQUIRE))
+                continue;
+            zombie = task;
+            task_unlink(task);
+            break;
+        }
+        spin_unlock_irqrestore(&task_lock, flags);
+        if (!zombie) return;
+        task_destroy(zombie);
+    }
 }
 
 static int init_fds(struct task *task) {
@@ -107,6 +125,7 @@ void task_set_entry(struct task *task, uint64_t pc, uint64_t sp) {
 }
 
 int task_fork(struct task_frame *frame) {
+    reap_detached();
     struct task *parent = task_current();
     struct task *child = task_alloc();
     if (!child) return -1;
@@ -119,6 +138,7 @@ int task_fork(struct task_frame *frame) {
     child->cwd = vnode_get(parent->cwd);
     child->mmap_next = parent->mmap_next;
     child->fs_base = parent->fs_base;
+    signal_fork(child, parent);
     *child->frame = *frame;
     arch_syscall_return2(child->frame, 0, 0);
     arch_task_state_save(parent->arch_state);
@@ -136,19 +156,21 @@ static int copy_status(struct task *task, uint64_t dst, int status) {
 }
 
 static int matches(struct task *child, struct task *parent, int pid) {
-    return child->ppid == parent->pid && (pid == -1 || pid == child->pid);
+    return child->ppid == parent->pid && !child->detached && (pid == -1 || pid == child->pid);
 }
 
 long task_wait(int pid, uint64_t status, int options) {
     struct task *self = task_current();
-    if (status && !vmm_user_range_ok(&self->space, status, sizeof(int), 1)) return -2;
+    if (status && !vmm_user_range_ok(&self->space, status, sizeof(int), 1))
+        return -NARC_BAD_ADDRESS;
+    reap_detached();
     struct task *zombie = 0;
     struct waiter waiter = { 0 };
-    int found;
+    long result = 0;
     for (;;) {
-        wait_prepare(&self->child_exit, &waiter);
-        found = 0;
-        spin_lock(&task_lock);
+        wait_prepare_interruptible(&self->child_exit, &waiter);
+        int found = 0;
+        unsigned long flags = spin_lock_irqsave(&task_lock);
         for (struct task *child = task_list; child; child = child->next) {
             if (!matches(child, self, pid)) continue;
             found = 1;
@@ -157,15 +179,24 @@ long task_wait(int pid, uint64_t status, int options) {
             task_unlink(child);
             break;
         }
-        spin_unlock(&task_lock);
-        if (zombie || !found || (options & WAIT_NOHANG)) break;
+        spin_unlock_irqrestore(&task_lock, flags);
+        if (zombie) break;
+        if (!found) {
+            result = -NARC_NO_CHILD;
+            break;
+        }
+        if (options & WAIT_NOHANG) break;
+        if (signal_pending()) {
+            result = -NARC_INTERRUPTED;
+            break;
+        }
         schedule();
     }
     wait_finish(&self->child_exit, &waiter);
-    if (!zombie) return found ? 0 : -1;
+    if (!zombie) return result;
     while (__atomic_load_n(&zombie->on_cpu, __ATOMIC_ACQUIRE)) arch_cpu_relax();
     copy_status(self, status, zombie->wait_status);
-    long result = zombie->pid;
+    result = zombie->pid;
     task_destroy(zombie);
     return result;
 }
@@ -183,6 +214,7 @@ void task_exec(struct task_frame *frame, struct address_space *space, uint64_t p
     vmm_space_activate(&self->space);
     arch_set_tls(0);
     vmm_space_destroy(&old);
+    signal_exec(self);
 }
 
 __attribute__((noreturn))
@@ -199,20 +231,32 @@ static void do_exit(int wait_status) {
     vmm_space_activate(sched_kernel_space());
     vmm_space_destroy(&self->space);
 
-    spin_lock(&task_lock);
+    unsigned long flags = spin_lock_irqsave(&task_lock);
     struct task *init = find_task(1);
     int orphaned_zombie = 0;
     for (struct task *child = task_list; child; child = child->next) {
         if (child->ppid != self->pid) continue;
         child->ppid = init ? init->pid : 0;
-        orphaned_zombie |= child->exited;
+        orphaned_zombie |= child->exited && !child->detached;
+    }
+    struct task *parent = find_task(self->ppid);
+    if (parent) {
+        narc_sigaction_t *action = &parent->signals.actions[NARC_SIGCHLD];
+        self->detached = action->handler == NARC_SIG_IGN || (action->flags & NARC_SA_NOCLDWAIT);
+        int signal = wait_status & 0x7f;
+        narc_siginfo_t info = {
+            .code = !signal ? NARC_CLD_EXITED : (wait_status & 0x80) ? NARC_CLD_DUMPED :
+                    NARC_CLD_KILLED,
+            .pid = self->pid,
+            .status = signal ? signal : (wait_status >> 8) & 0xff,
+        };
+        signal_send(parent, NARC_SIGCHLD, &info);
     }
     self->wait_status = wait_status;
     self->exited = 1;
-    struct task *parent = find_task(self->ppid);
     if (parent) wake_up_all(&parent->child_exit);
     if (init && orphaned_zombie) wake_up_all(&init->child_exit);
-    spin_unlock(&task_lock);
+    spin_unlock_irqrestore(&task_lock, flags);
     sched_exit();
 }
 
@@ -220,9 +264,24 @@ void task_exit(int status) {
     do_exit((status & 0xff) << 8);
 }
 
-void task_kill_fault(int signal) {
+void task_exit_signal(int signal) {
     arch_irq_enable();
-    do_exit(signal & 0x7f);
+    do_exit(signal & 0xff);
+}
+
+int task_kill(int pid, int signal) {
+    if (signal < 0 || signal >= NARC_NSIG) return -NARC_INVALID_ARGUMENT;
+    struct task *self = task_current();
+    narc_siginfo_t info = { .code = NARC_SI_USER, .pid = self->pid };
+    int delivered = 0;
+    unsigned long flags = spin_lock_irqsave(&task_lock);
+    for (struct task *task = task_list; task; task = task->next) {
+        if (pid > 0 ? task->pid != pid : pid == -1 ? task->pid == 1 : 1) continue;
+        delivered = 1;
+        signal_send(task, signal, &info);
+    }
+    spin_unlock_irqrestore(&task_lock, flags);
+    return delivered ? 0 : -NARC_NO_PROCESS;
 }
 
 int task_pid(void) { return task_current()->pid; }

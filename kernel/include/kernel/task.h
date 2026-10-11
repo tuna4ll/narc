@@ -1,6 +1,7 @@
 #pragma once
 #include <kernel/arch.h>
 #include <kernel/mm.h>
+#include <kernel/signal.h>
 #include <kernel/wait.h>
 #include <stdint.h>
 
@@ -20,7 +21,8 @@ struct task {
     int pid, ppid;
     int state;
     int on_cpu, on_rq;
-    int exited, wait_status;
+    int interruptible;
+    int exited, detached, wait_status;
     uint64_t context;
     uint64_t kstack_top;
     struct task_frame *frame;
@@ -29,6 +31,9 @@ struct task {
     struct fd_table *files;
     struct vnode *cwd;
     struct wait_queue child_exit;
+    struct signal_state signals;
+    int syscall_restart;
+    uint64_t syscall_saved[4];
     uint8_t arch_state[ARCH_STATE_SIZE] __attribute__((aligned(16)));
 };
 
@@ -39,7 +44,8 @@ int task_fork(struct task_frame *frame);
 long task_wait(int pid, uint64_t status, int options);
 void task_exec(struct task_frame *frame, struct address_space *space, uint64_t pc, uint64_t sp);
 void task_exit(int status) __attribute__((noreturn));
-void task_kill_fault(int signal) __attribute__((noreturn));
+void task_exit_signal(int signal) __attribute__((noreturn));
+int task_kill(int pid, int signal);
 int task_pid(void);
 uint64_t task_fs_base(void);
 void task_set_fs_base(uint64_t value);

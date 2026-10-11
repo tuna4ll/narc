@@ -3,6 +3,7 @@
 #include <kernel/syscall.h>
 #include <kernel/mm.h>
 #include <kernel/sched.h>
+#include <kernel/signal.h>
 #include <kernel/serial.h>
 #include <kernel/task.h>
 #include <kernel/time.h>
@@ -95,6 +96,38 @@ void arch_syscall_return2(struct task_frame *frame, uint64_t value, uint64_t sta
     frame->x[11] = status;
 }
 
+uint64_t arch_syscall_status(const struct task_frame *frame) {
+    return frame->x[11];
+}
+
+void arch_syscall_restart(struct task_frame *frame, const uint64_t saved[4]) {
+    frame->x[10] = saved[1];
+    frame->x[11] = saved[2];
+    frame->pc -= 4;
+}
+
+uint64_t arch_frame_sp(const struct task_frame *frame) {
+    return frame->x[2];
+}
+
+int arch_signal_enter(struct task_frame *frame, uint64_t handler, uint64_t sp,
+                      uint64_t restorer, uint64_t arg0, uint64_t arg1, uint64_t arg2) {
+    frame->x[2] = sp;
+    frame->pc = handler;
+    frame->x[10] = arg0;
+    frame->x[11] = arg1;
+    frame->x[12] = arg2;
+    frame->x[1] = restorer;
+    return 0;
+}
+
+int arch_frame_sanitize(struct task_frame *frame, void *state) {
+    (void)state;
+    frame->x[0] = 0;
+    frame->status = (1ULL << 5) | (3ULL << 13);
+    return 0;
+}
+
 int arch_frame_from_user(const struct task_frame *frame) {
     return !(frame->status & (1ULL << 8));
 }
@@ -148,12 +181,12 @@ void riscv_trap(struct task_frame *frame) {
     if (cause == ((1ULL << 63) | 5)) {
         timer_reset();
         time_tick();
-        if (arch_frame_from_user(frame)) sched_user_return();
+        if (arch_frame_from_user(frame)) user_return(frame);
         return;
     }
     if (cause == ((1ULL << 63) | 9)) {
         external_interrupt();
-        if (arch_frame_from_user(frame)) sched_user_return();
+        if (arch_frame_from_user(frame)) user_return(frame);
         return;
     }
     if (cause == 8) {
@@ -161,9 +194,13 @@ void riscv_trap(struct task_frame *frame) {
         syscall_dispatch(frame);
         return;
     }
-    if (arch_frame_from_user(frame)) task_kill_fault(fault_signal(cause));
     uint64_t tval;
     __asm__ volatile ("csrr %0, stval" : "=r"(tval));
+    if (arch_frame_from_user(frame)) {
+        signal_force(fault_signal(cause), tval);
+        user_return(frame);
+        return;
+    }
     serial_puts("[panic] scause=");
     serial_puthex(cause);
     serial_puts(" sepc=");

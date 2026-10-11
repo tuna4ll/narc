@@ -11,6 +11,7 @@ struct task_frame {
 };
 #define ARCH_STATE_SIZE 512
 #define ARCH_ELF_MACHINE 62
+#define ARCH_RED_ZONE 128
 #elif defined(__aarch64__)
 struct task_frame {
     uint64_t x[31];
@@ -18,6 +19,7 @@ struct task_frame {
 };
 #define ARCH_STATE_SIZE 536
 #define ARCH_ELF_MACHINE 183
+#define ARCH_RED_ZONE 0
 #elif defined(__riscv)
 struct task_frame {
     uint64_t x[32];
@@ -25,6 +27,7 @@ struct task_frame {
 };
 #define ARCH_STATE_SIZE 264
 #define ARCH_ELF_MACHINE 243
+#define ARCH_RED_ZONE 0
 #else
 #error Unsupported architecture
 #endif
@@ -41,6 +44,7 @@ uint64_t arch_syscall_number(const struct task_frame *frame);
 uint64_t arch_syscall_arg(const struct task_frame *frame, unsigned index);
 void arch_syscall_return(struct task_frame *frame, uint64_t value);
 void arch_syscall_return2(struct task_frame *frame, uint64_t value, uint64_t status);
+uint64_t arch_syscall_status(const struct task_frame *frame);
 int arch_frame_from_user(const struct task_frame *frame);
 uint64_t arch_context_init(uint64_t stack_top, void (*entry)(void));
 void arch_context_switch(uint64_t *prev, uint64_t next);

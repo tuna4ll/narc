@@ -2,6 +2,7 @@
 #include <kernel/spinlock.h>
 #include <kernel/task.h>
 #include <kernel/time.h>
+#include <narc/abi.h>
 
 static struct spinlock timer_lock = SPINLOCK_INIT;
 static struct ktimer *timers;
@@ -69,13 +70,18 @@ static void wake_sleeper(struct ktimer *timer) {
 
 int time_sleep_until(uint64_t deadline) {
     struct ktimer timer = { .expire = wake_sleeper, .data = task_current() };
+    int status = 0;
     ktimer_arm(&timer, deadline);
     for (;;) {
-        sched_sleep_prepare();
+        sched_sleep_prepare(1);
         if (arch_clock_ns() >= deadline) break;
+        if (signal_pending()) {
+            status = -NARC_INTERRUPTED;
+            break;
+        }
         schedule();
     }
     sched_sleep_cancel();
     ktimer_cancel(&timer);
-    return 0;
+    return status;
 }

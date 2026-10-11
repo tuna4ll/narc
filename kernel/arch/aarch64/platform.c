@@ -4,6 +4,7 @@
 #include <kernel/string.h>
 #include <kernel/syscall.h>
 #include <kernel/sched.h>
+#include <kernel/signal.h>
 #include <kernel/task.h>
 #include <kernel/time.h>
 #include <narc/abi.h>
@@ -124,6 +125,37 @@ void arch_syscall_return2(struct task_frame *frame, uint64_t value, uint64_t sta
     frame->x[1] = status;
 }
 
+uint64_t arch_syscall_status(const struct task_frame *frame) {
+    return frame->x[1];
+}
+
+void arch_syscall_restart(struct task_frame *frame, const uint64_t saved[4]) {
+    frame->x[0] = saved[1];
+    frame->x[1] = saved[2];
+    frame->pc -= 4;
+}
+
+uint64_t arch_frame_sp(const struct task_frame *frame) {
+    return frame->sp;
+}
+
+int arch_signal_enter(struct task_frame *frame, uint64_t handler, uint64_t sp,
+                      uint64_t restorer, uint64_t arg0, uint64_t arg1, uint64_t arg2) {
+    frame->sp = sp;
+    frame->pc = handler;
+    frame->x[0] = arg0;
+    frame->x[1] = arg1;
+    frame->x[2] = arg2;
+    frame->x[30] = restorer;
+    return 0;
+}
+
+int arch_frame_sanitize(struct task_frame *frame, void *state) {
+    (void)state;
+    frame->pstate &= 0xf0000000ULL;
+    return 0;
+}
+
 int arch_frame_from_user(const struct task_frame *frame) {
     return (frame->pstate & 0xf) == 0;
 }
@@ -169,7 +201,11 @@ void aarch64_sync(struct task_frame *frame) {
         syscall_dispatch(frame);
         return;
     }
-    if (arch_frame_from_user(frame)) task_kill_fault(fault_signal(esr));
+    if (arch_frame_from_user(frame)) {
+        signal_force(fault_signal(esr), far);
+        user_return(frame);
+        return;
+    }
     serial_puts("[panic] esr=");
     serial_puthex(esr);
     serial_puts(" elr=");
@@ -190,5 +226,5 @@ void aarch64_irq(struct task_frame *frame) {
         serial_interrupt();
     }
     gicc[0x10 / 4] = irq;
-    if (arch_frame_from_user(frame)) sched_user_return();
+    if (arch_frame_from_user(frame)) user_return(frame);
 }

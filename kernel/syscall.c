@@ -3,6 +3,7 @@
 #include <kernel/mm.h>
 #include <kernel/pipe.h>
 #include <kernel/sched.h>
+#include <kernel/signal.h>
 #include <kernel/string.h>
 #include <kernel/syscall.h>
 #include <kernel/task.h>
@@ -402,8 +403,9 @@ static struct kernel_result handle_clock_get(uint64_t clock) {
 static struct kernel_result handle_sleep(uint64_t nanoseconds) {
     uint64_t now = time_monotonic_ns();
     uint64_t deadline = nanoseconds > UINT64_MAX - now ? UINT64_MAX : now + nanoseconds;
-    time_sleep_until(deadline);
-    return result_ok(0);
+    if (!time_sleep_until(deadline)) return result_ok(0);
+    now = time_monotonic_ns();
+    return (struct kernel_result) { deadline > now ? deadline - now : 0, NARC_INTERRUPTED };
 }
 
 static uint32_t handle_exec(struct task_frame *frame, uint64_t path_address,
@@ -442,13 +444,9 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return_result(frame, pid < 0 ? result_error(NARC_TRY_AGAIN) : result_ok((uint64_t)pid));
         return;
     }
-    case NARC_SYS_WAIT: {
-        long value = task_wait((int)a1, a2, (int)a3);
-        return_result(frame, value == -2 ? result_error(NARC_BAD_ADDRESS) :
-                             value < 0 ? result_error(NARC_NO_CHILD) :
-                                         result_ok((uint64_t)value));
+    case NARC_SYS_WAIT:
+        return_result(frame, result_status(task_wait((int)a1, a2, (int)a3)));
         return;
-    }
     case NARC_SYS_EXEC: {
         uint32_t status = handle_exec(frame, a1, a2, a3);
         if (status != NARC_OK) return_result(frame, result_error(status));
@@ -519,19 +517,47 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
     case NARC_SYS_SLEEP:
         return_result(frame, handle_sleep(a1));
         return;
+    case NARC_SYS_KILL:
+        return_result(frame, result_status(task_kill((int)a1, (int)a2)));
+        return;
+    case NARC_SYS_SIGACTION:
+        return_result(frame, result_status(signal_action((int)a1, a2, a3)));
+        return;
+    case NARC_SYS_SIGMASK:
+        return_result(frame, result_status(signal_mask((int)a1, a2)));
+        return;
+    case NARC_SYS_SIGPENDING:
+        return_result(frame, result_ok(task_current()->signals.pending));
+        return;
+    case NARC_SYS_SIGSUSPEND:
+        return_result(frame, result_status(signal_suspend(a1)));
+        return;
+    case NARC_SYS_SIGRETURN:
+        signal_return(frame);
+        return;
     default:
         return_result(frame, result_error(NARC_NOT_SUPPORTED));
         return;
     }
 }
 
+static int restartable(uint64_t id) {
+    return id == NARC_SYS_READ || id == NARC_SYS_WRITE || id == NARC_SYS_WAIT;
+}
+
 void syscall_dispatch(struct task_frame *frame) {
+    struct task *self = task_current();
     uint64_t number = arch_syscall_number(frame);
+    self->syscall_saved[0] = number;
+    for (unsigned i = 0; i < 3; i++) self->syscall_saved[i + 1] = arch_syscall_arg(frame, i);
     arch_irq_enable();
-    if ((number & NARC_SYSCALL_TAG_MASK) != NARC_SYSCALL_TAG)
+    if ((number & NARC_SYSCALL_TAG_MASK) != NARC_SYSCALL_TAG) {
         return_result(frame, result_error(NARC_NOT_SUPPORTED));
-    else
-        dispatch(frame, number & NARC_SYSCALL_ID_MASK);
+    } else {
+        uint64_t id = number & NARC_SYSCALL_ID_MASK;
+        dispatch(frame, id);
+        self->syscall_restart = restartable(id) && arch_syscall_status(frame) == NARC_INTERRUPTED;
+    }
     arch_irq_disable();
-    sched_user_return();
+    user_return(frame);
 }

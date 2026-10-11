@@ -33,12 +33,20 @@ static struct waiter *pop(struct wait_queue *queue) {
     return waiter;
 }
 
-void wait_prepare(struct wait_queue *queue, struct waiter *waiter) {
+static void prepare(struct wait_queue *queue, struct waiter *waiter, int interruptible) {
     unsigned long flags = spin_lock_irqsave(&queue->lock);
     waiter->task = task_current();
     if (!waiter->queued) enqueue(queue, waiter);
-    sched_sleep_prepare();
+    sched_sleep_prepare(interruptible);
     spin_unlock_irqrestore(&queue->lock, flags);
+}
+
+void wait_prepare(struct wait_queue *queue, struct waiter *waiter) {
+    prepare(queue, waiter, 0);
+}
+
+void wait_prepare_interruptible(struct wait_queue *queue, struct waiter *waiter) {
+    prepare(queue, waiter, 1);
 }
 
 void wait_finish(struct wait_queue *queue, struct waiter *waiter) {

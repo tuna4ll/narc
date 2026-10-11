@@ -1,6 +1,8 @@
 #include <kernel/heap.h>
 #include <kernel/mm.h>
 #include <kernel/pipe.h>
+#include <kernel/sched.h>
+#include <kernel/signal.h>
 #include <kernel/spinlock.h>
 #include <kernel/wait.h>
 #include <narc/abi.h>
@@ -31,7 +33,12 @@ static void pipe_release(struct pipe *pipe, int reader) {
 static long pipe_read(struct open_file *open, void *buffer, size_t length) {
     struct pipe *pipe = open->private;
     spin_lock(&pipe->lock);
-    wait_event_locked(&pipe->readable, pipe->count || !pipe->writers, &pipe->lock);
+    int status = wait_event_interruptible_locked(&pipe->readable, pipe->count || !pipe->writers,
+                                                 &pipe->lock);
+    if (status) {
+        spin_unlock(&pipe->lock);
+        return status;
+    }
     size_t done = length < pipe->count ? length : pipe->count;
     for (size_t i = 0; i < done; i++) {
         ((uint8_t *)buffer)[i] = pipe->data[pipe->head];
@@ -48,11 +55,18 @@ static long pipe_write(struct open_file *open, const void *buffer, size_t length
     size_t done = 0;
     while (done < length) {
         spin_lock(&pipe->lock);
-        wait_event_locked(&pipe->writable, pipe->count < PIPE_SIZE || !pipe->readers,
-                          &pipe->lock);
+        int status = wait_event_interruptible_locked(&pipe->writable,
+                                                     pipe->count < PIPE_SIZE || !pipe->readers,
+                                                     &pipe->lock);
+        if (status) {
+            spin_unlock(&pipe->lock);
+            return done ? (long)done : status;
+        }
         if (!pipe->readers) {
             spin_unlock(&pipe->lock);
-            return done ? (long)done : -NARC_BROKEN_PIPE;
+            if (done) return (long)done;
+            signal_send(task_current(), NARC_SIGPIPE, 0);
+            return -NARC_BROKEN_PIPE;
         }
         size_t space = PIPE_SIZE - pipe->count;
         size_t chunk = length - done < space ? length - done : space;
