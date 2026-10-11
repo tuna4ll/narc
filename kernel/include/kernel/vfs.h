@@ -81,11 +81,13 @@ uint8_t vfs_mode_type(uint32_t mode);
 
 int vfs_init(const void *archive, uint64_t size);
 struct vnode *vfs_root(void);
-int vfs_lookup(const char *path, struct vnode **result);
-int vfs_open(const char *path, uint32_t flags, uint32_t mode, struct vnode **result);
-int vfs_mkdir(const char *path, uint32_t mode);
-int vfs_unlink(const char *path, int directory);
-int vfs_rename(const char *old_path, const char *new_path);
+int vfs_lookup(struct vnode *base, const char *path, struct vnode **result);
+int vfs_open(struct vnode *base, const char *path, uint32_t flags, uint32_t mode,
+             struct vnode **result);
+int vfs_mkdir(struct vnode *base, const char *path, uint32_t mode);
+int vfs_unlink(struct vnode *base, const char *path, int directory);
+int vfs_rename(struct vnode *base, const char *old_path, const char *new_path);
+long vfs_getcwd(struct vnode *dir, char *buffer, size_t size);
 long vfs_read(struct vnode *node, uint64_t offset, void *buffer, size_t length);
 long vfs_write(struct vnode *node, uint64_t offset, const void *buffer, size_t length);
 int vfs_truncate(struct vnode *node, uint64_t size);

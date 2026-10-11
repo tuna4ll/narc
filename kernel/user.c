@@ -232,10 +232,11 @@ static int load_image(struct address_space *space, struct vnode *node, uint64_t 
     return 0;
 }
 
-static int load(struct address_space *space, const char *path, const struct strings *argv,
-                const struct strings *envp, uint64_t *entry, uint64_t *stack) {
+static int load(struct address_space *space, struct vnode *base, const char *path,
+                const struct strings *argv, const struct strings *envp,
+                uint64_t *entry, uint64_t *stack) {
     struct vnode *node;
-    if (vfs_lookup(path, &node) != 0) return -1;
+    if (vfs_lookup(base, path, &node) != 0) return -1;
     uint64_t size = node->size;
     struct elf64_ehdr eh;
     struct elf64_phdr *ph = 0;
@@ -276,7 +277,7 @@ int user_exec(struct task_frame *frame, const char *path, uint64_t argv, uint64_
     struct address_space space;
     uint64_t entry, stack;
     if (vmm_space_create(&space) != 0) return -1;
-    if (load(&space, path, &arguments, &environment, &entry, &stack) != 0) {
+    if (load(&space, task_cwd(), path, &arguments, &environment, &entry, &stack) != 0) {
         vmm_space_destroy(&space);
         return -1;
     }
@@ -291,7 +292,7 @@ void user_start(void) {
     struct task *task = task_create();
     uint64_t entry, stack;
     if (!task || measure(&arguments) != 0 ||
-        load(&task->space, argv[0], &arguments, &environment, &entry, &stack) != 0) {
+        load(&task->space, vfs_root(), argv[0], &arguments, &environment, &entry, &stack) != 0) {
         console_puts("[panic] cannot start init\n");
         arch_halt();
     }

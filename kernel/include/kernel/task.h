@@ -12,6 +12,7 @@ enum task_state {
 };
 
 struct fd_table;
+struct vnode;
 
 struct task {
     struct task *next;
@@ -26,6 +27,7 @@ struct task {
     struct address_space space;
     uint64_t fs_base, mmap_next;
     struct fd_table *files;
+    struct vnode *cwd;
     struct wait_queue child_exit;
     uint8_t arch_state[ARCH_STATE_SIZE] __attribute__((aligned(16)));
 };
@@ -44,3 +46,5 @@ void task_set_fs_base(uint64_t value);
 uint64_t task_mmap_next(void);
 void task_set_mmap_next(uint64_t value);
 struct fd_table *task_files(void);
+struct vnode *task_cwd(void);
+void task_set_cwd(struct vnode *node);

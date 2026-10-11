@@ -8,6 +8,7 @@
 #include <kernel/task.h>
 #include <kernel/tty.h>
 #include <kernel/uaccess.h>
+#include <kernel/vfs.h>
 
 #define KSTACK_SIZE (16ULL * 1024ULL)
 #define WAIT_NOHANG 1
@@ -52,6 +53,7 @@ static struct task *task_alloc(void) {
 
 static void task_destroy(struct task *task) {
     fd_table_release(task->files);
+    vnode_put(task->cwd);
     if (task->space.root) vmm_space_destroy(&task->space);
     kstack_free(task->kstack_top, KSTACK_SIZE);
     kfree(task);
@@ -92,6 +94,7 @@ struct task *task_create(void) {
         task_destroy(task);
         return 0;
     }
+    task->cwd = vnode_get(vfs_root());
     task->mmap_next = USER_MMAP_BASE;
     arch_task_frame_init(task->frame);
     arch_task_state_init(task->arch_state);
@@ -113,6 +116,7 @@ int task_fork(struct task_frame *frame) {
         return -1;
     }
     child->ppid = parent->pid;
+    child->cwd = vnode_get(parent->cwd);
     child->mmap_next = parent->mmap_next;
     child->fs_base = parent->fs_base;
     *child->frame = *frame;
@@ -190,6 +194,8 @@ static void do_exit(int wait_status) {
     }
     fd_table_release(self->files);
     self->files = 0;
+    vnode_put(self->cwd);
+    self->cwd = 0;
     vmm_space_activate(sched_kernel_space());
     vmm_space_destroy(&self->space);
 
@@ -231,3 +237,11 @@ void task_set_fs_base(uint64_t value) {
 void task_set_mmap_next(uint64_t value) { task_current()->mmap_next = value; }
 
 struct fd_table *task_files(void) { return task_current()->files; }
+struct vnode *task_cwd(void) { return task_current()->cwd; }
+
+void task_set_cwd(struct vnode *node) {
+    struct task *self = task_current();
+    struct vnode *old = self->cwd;
+    self->cwd = node;
+    vnode_put(old);
+}

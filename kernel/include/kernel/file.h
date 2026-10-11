@@ -30,7 +30,8 @@ struct fd_table {
 };
 
 struct open_file *file_alloc(const struct file_ops *ops, void *private);
-int file_open(const char *path, uint32_t flags, uint32_t mode, struct open_file **result);
+int file_open(struct vnode *base, const char *path, uint32_t flags, uint32_t mode,
+              struct open_file **result);
 struct open_file *file_get(struct open_file *open);
 void file_put(struct open_file *open);
 long file_read(struct open_file *open, void *buffer, size_t length);

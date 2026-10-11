@@ -157,7 +157,7 @@ static struct kernel_result handle_open(uint64_t address, uint64_t length, uint6
     if (flags & NARC_OPEN_EXCLUSIVE) native_flags |= VFS_OPEN_EXCLUSIVE;
     if (flags & NARC_OPEN_APPEND) native_flags |= VFS_OPEN_APPEND;
     struct open_file *open;
-    int status = file_open(path, native_flags, 0666, &open);
+    int status = file_open(task_cwd(), path, native_flags, 0666, &open);
     kfree(path);
     if (status) return result_error((uint32_t)-status);
     int fd = fd_install(task_files(), open, 3);
@@ -172,7 +172,7 @@ static struct kernel_result handle_mkdir(uint64_t address, uint64_t length, uint
     char *path;
     uint32_t status = copy_path(&path, address, length);
     if (status != NARC_OK) return result_error(status);
-    int result = vfs_mkdir(path, (uint32_t)mode);
+    int result = vfs_mkdir(task_cwd(), path, (uint32_t)mode);
     kfree(path);
     return result_status(result);
 }
@@ -182,7 +182,7 @@ static struct kernel_result handle_unlink(uint64_t address, uint64_t length,
     char *path;
     uint32_t status = copy_path(&path, address, length);
     if (status != NARC_OK) return result_error(status);
-    int result = vfs_unlink(path, remove_directory);
+    int result = vfs_unlink(task_cwd(), path, remove_directory);
     kfree(path);
     return result_status(result);
 }
@@ -197,10 +197,48 @@ static struct kernel_result handle_rename(uint64_t old_address, uint64_t old_len
         kfree(old_path);
         return result_error(status);
     }
-    int result = vfs_rename(old_path, new_path);
+    int result = vfs_rename(task_cwd(), old_path, new_path);
     kfree(old_path);
     kfree(new_path);
     return result_status(result);
+}
+
+static struct kernel_result handle_chdir(uint64_t address, uint64_t length) {
+    char *path;
+    uint32_t status = copy_path(&path, address, length);
+    if (status != NARC_OK) return result_error(status);
+    struct vnode *node;
+    int result = vfs_lookup(task_cwd(), path, &node);
+    kfree(path);
+    if (result) return result_status(result);
+    if (node->type != VFS_DIR) {
+        vnode_put(node);
+        return result_error(NARC_NOT_DIRECTORY);
+    }
+    task_set_cwd(node);
+    return result_ok(0);
+}
+
+static struct kernel_result handle_fchdir(uint64_t fd) {
+    struct open_file *open = fd_get(task_files(), (int)fd);
+    if (!open) return result_error(NARC_BAD_HANDLE);
+    struct vnode *node = open->node;
+    int directory = node && node->type == VFS_DIR;
+    if (directory) task_set_cwd(vnode_get(node));
+    file_put(open);
+    return directory ? result_ok(0) : result_error(NARC_NOT_DIRECTORY);
+}
+
+static struct kernel_result handle_getcwd(uint64_t address, uint64_t size) {
+    if (!size) return result_error(NARC_INVALID_ARGUMENT);
+    if (size > VFS_PATH_MAX) size = VFS_PATH_MAX;
+    char *buffer = kmalloc((size_t)size);
+    if (!buffer) return result_error(NARC_NO_MEMORY);
+    long length = vfs_getcwd(task_cwd(), buffer, (size_t)size);
+    if (length >= 0 && copy_to_user(address, buffer, (size_t)length + 1) != 0)
+        length = -NARC_BAD_ADDRESS;
+    kfree(buffer);
+    return result_status(length);
 }
 
 static struct kernel_result handle_close(uint64_t fd) {
@@ -402,6 +440,15 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         if (status != NARC_OK) return_result(frame, result_error(status));
         return;
     }
+    case NARC_SYS_CHDIR:
+        return_result(frame, handle_chdir(a1, a2));
+        return;
+    case NARC_SYS_FCHDIR:
+        return_result(frame, handle_fchdir(a1));
+        return;
+    case NARC_SYS_GETCWD:
+        return_result(frame, handle_getcwd(a1, a2));
+        return;
     case NARC_SYS_OPEN:
         return_result(frame, handle_open(a1, a2, a3));
         return;

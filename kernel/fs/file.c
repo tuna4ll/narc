@@ -35,9 +35,10 @@ struct open_file *file_alloc(const struct file_ops *ops, void *private) {
     return open;
 }
 
-int file_open(const char *path, uint32_t flags, uint32_t mode, struct open_file **result) {
+int file_open(struct vnode *base, const char *path, uint32_t flags, uint32_t mode,
+              struct open_file **result) {
     struct vnode *node;
-    int status = vfs_open(path, flags, mode, &node);
+    int status = vfs_open(base, path, flags, mode, &node);
     if (status) return status;
     struct open_file *open = file_alloc(&vnode_file_ops, 0);
     if (!open) {

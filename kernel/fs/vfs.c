@@ -62,9 +62,8 @@ static int step(struct vnode **node, const char *name, size_t length) {
     return 0;
 }
 
-static int walk(const char *path, size_t length, struct vnode **result) {
-    if (!length || path[0] != '/') return -NARC_NOT_FOUND;
-    struct vnode *node = vnode_get(root);
+static int walk(struct vnode *base, const char *path, size_t length, struct vnode **result) {
+    struct vnode *node = vnode_get(length && path[0] == '/' ? root : base);
     for (size_t i = 0; i < length;) {
         while (i < length && path[i] == '/') i++;
         size_t start = i;
@@ -76,7 +75,7 @@ static int walk(const char *path, size_t length, struct vnode **result) {
             return status;
         }
     }
-    if (path[length - 1] == '/' && node->type != VFS_DIR) {
+    if (length && path[length - 1] == '/' && node->type != VFS_DIR) {
         vnode_put(node);
         return -NARC_NOT_DIRECTORY;
     }
@@ -84,8 +83,8 @@ static int walk(const char *path, size_t length, struct vnode **result) {
     return 0;
 }
 
-static int lookup_parent(const char *path, struct vnode **parent, const char **name,
-                         size_t *length) {
+static int lookup_parent(struct vnode *base, const char *path, struct vnode **parent,
+                         const char **name, size_t *length) {
     size_t end = strlen(path);
     while (end && path[end - 1] == '/') end--;
     size_t start = end;
@@ -93,7 +92,7 @@ static int lookup_parent(const char *path, struct vnode **parent, const char **n
     if (start == end || dot(path + start, end - start) || dotdot(path + start, end - start))
         return -NARC_INVALID_ARGUMENT;
     if (end - start > VFS_NAME_MAX) return -NARC_NAME_TOO_LONG;
-    int status = walk(path, start, parent);
+    int status = walk(base, path, start, parent);
     if (status) return status;
     if ((*parent)->type != VFS_DIR) {
         vnode_put(*parent);
@@ -104,18 +103,20 @@ static int lookup_parent(const char *path, struct vnode **parent, const char **n
     return 0;
 }
 
-int vfs_lookup(const char *path, struct vnode **result) {
+int vfs_lookup(struct vnode *base, const char *path, struct vnode **result) {
+    if (!*path) return -NARC_NOT_FOUND;
     mutex_lock(&namespace_lock);
-    int status = walk(path, strlen(path), result);
+    int status = walk(base, path, strlen(path), result);
     mutex_unlock(&namespace_lock);
     return status;
 }
 
-static int create_locked(const char *path, uint32_t mode, struct vnode **result) {
+static int create_locked(struct vnode *base, const char *path, uint32_t mode,
+                         struct vnode **result) {
     struct vnode *parent;
     const char *name;
     size_t length;
-    int status = lookup_parent(path, &parent, &name, &length);
+    int status = lookup_parent(base, path, &parent, &name, &length);
     if (status) return status;
     status = parent->ops->create ? parent->ops->create(parent, name, length, mode, 0, result) :
                                    -NARC_NOT_SUPPORTED;
@@ -123,10 +124,11 @@ static int create_locked(const char *path, uint32_t mode, struct vnode **result)
     return status;
 }
 
-static int open_locked(const char *path, uint32_t flags, uint32_t mode, struct vnode **result) {
-    int status = walk(path, strlen(path), result);
+static int open_locked(struct vnode *base, const char *path, uint32_t flags, uint32_t mode,
+                       struct vnode **result) {
+    int status = walk(base, path, strlen(path), result);
     if (status == -NARC_NOT_FOUND && (flags & VFS_OPEN_CREATE))
-        return create_locked(path, S_IFREG | (mode & 07777), result);
+        return create_locked(base, path, S_IFREG | (mode & 07777), result);
     if (status) return status;
     if ((flags & VFS_OPEN_CREATE) && (flags & VFS_OPEN_EXCLUSIVE)) status = -NARC_EXISTS;
     else if ((flags & VFS_OPEN_DIRECTORY) && (*result)->type != VFS_DIR)
@@ -137,9 +139,11 @@ static int open_locked(const char *path, uint32_t flags, uint32_t mode, struct v
     return status;
 }
 
-int vfs_open(const char *path, uint32_t flags, uint32_t mode, struct vnode **result) {
+int vfs_open(struct vnode *base, const char *path, uint32_t flags, uint32_t mode,
+             struct vnode **result) {
+    if (!*path) return -NARC_NOT_FOUND;
     mutex_lock(&namespace_lock);
-    int status = open_locked(path, flags, mode, result);
+    int status = open_locked(base, path, flags, mode, result);
     mutex_unlock(&namespace_lock);
     if (status || !(flags & VFS_OPEN_TRUNCATE) || !(flags & VFS_OPEN_WRITE) ||
         (*result)->type != VFS_REG)
@@ -149,19 +153,19 @@ int vfs_open(const char *path, uint32_t flags, uint32_t mode, struct vnode **res
     return status;
 }
 
-int vfs_mkdir(const char *path, uint32_t mode) {
+int vfs_mkdir(struct vnode *base, const char *path, uint32_t mode) {
     mutex_lock(&namespace_lock);
-    int status = create_locked(path, S_IFDIR | (mode & 07777), 0);
+    int status = create_locked(base, path, S_IFDIR | (mode & 07777), 0);
     mutex_unlock(&namespace_lock);
     return status;
 }
 
-int vfs_unlink(const char *path, int directory) {
+int vfs_unlink(struct vnode *base, const char *path, int directory) {
     struct vnode *parent;
     const char *name;
     size_t length;
     mutex_lock(&namespace_lock);
-    int status = lookup_parent(path, &parent, &name, &length);
+    int status = lookup_parent(base, path, &parent, &name, &length);
     if (!status) {
         status = parent->ops->unlink ? parent->ops->unlink(parent, name, length, directory) :
                                        -NARC_NOT_SUPPORTED;
@@ -182,13 +186,13 @@ static int contains(struct vnode *ancestor, struct vnode *dir) {
     return found;
 }
 
-static int rename_locked(const char *old_path, const char *new_path) {
+static int rename_locked(struct vnode *base, const char *old_path, const char *new_path) {
     struct vnode *old_parent, *new_parent, *node;
     const char *old_name, *new_name;
     size_t old_length, new_length;
-    int status = lookup_parent(old_path, &old_parent, &old_name, &old_length);
+    int status = lookup_parent(base, old_path, &old_parent, &old_name, &old_length);
     if (status) return status;
-    status = lookup_parent(new_path, &new_parent, &new_name, &new_length);
+    status = lookup_parent(base, new_path, &new_parent, &new_name, &new_length);
     if (status) {
         vnode_put(old_parent);
         return status;
@@ -209,9 +213,62 @@ static int rename_locked(const char *old_path, const char *new_path) {
     return status;
 }
 
-int vfs_rename(const char *old_path, const char *new_path) {
+int vfs_rename(struct vnode *base, const char *old_path, const char *new_path) {
     mutex_lock(&namespace_lock);
-    int status = rename_locked(old_path, new_path);
+    int status = rename_locked(base, old_path, new_path);
+    mutex_unlock(&namespace_lock);
+    return status;
+}
+
+static int entry_name(struct vnode *parent, struct vnode *node, struct vfs_dirent *entry) {
+    uint64_t cookie = 0;
+    int status;
+    while ((status = parent->ops->readdir(parent, &cookie, entry)) > 0) {
+        size_t length = strlen(entry->name);
+        if (entry->ino == node->ino && !dot(entry->name, length) &&
+            !dotdot(entry->name, length))
+            return 0;
+    }
+    return status < 0 ? status : -NARC_NOT_FOUND;
+}
+
+static long getcwd_locked(struct vnode *dir, char *buffer, size_t size) {
+    struct vfs_dirent *entry = kmalloc(sizeof(*entry));
+    if (!entry) return -NARC_NO_MEMORY;
+    size_t position = size;
+    buffer[--position] = 0;
+    struct vnode *node = vnode_get(dir);
+    long status = 0;
+    while (!status && node != root) {
+        struct vnode *parent;
+        status = node->ops->lookup(node, "..", 2, &parent);
+        if (status) break;
+        status = entry_name(parent, node, entry);
+        size_t length = status ? 0 : strlen(entry->name);
+        if (!status && length + 1 > position) status = -NARC_OUT_OF_RANGE;
+        if (!status) {
+            position -= length;
+            memcpy(buffer + position, entry->name, length);
+            buffer[--position] = '/';
+        }
+        vnode_put(node);
+        node = parent;
+    }
+    vnode_put(node);
+    kfree(entry);
+    if (status) return status;
+    if (position == size - 1) {
+        if (!position) return -NARC_OUT_OF_RANGE;
+        buffer[--position] = '/';
+    }
+    memmove(buffer, buffer + position, size - position);
+    return (long)(size - position - 1);
+}
+
+long vfs_getcwd(struct vnode *dir, char *buffer, size_t size) {
+    if (!size) return -NARC_OUT_OF_RANGE;
+    mutex_lock(&namespace_lock);
+    long status = getcwd_locked(dir, buffer, size);
     mutex_unlock(&namespace_lock);
     return status;
 }

@@ -18,6 +18,9 @@ enum narc_syscall {
     NARC_SYS_FORK      = 0x0004,
     NARC_SYS_WAIT      = 0x0005,
     NARC_SYS_EXEC      = 0x0006,
+    NARC_SYS_CHDIR     = 0x0007,
+    NARC_SYS_FCHDIR    = 0x0008,
+    NARC_SYS_GETCWD    = 0x0009,
 
     NARC_SYS_OPEN      = 0x0100,
     NARC_SYS_CLOSE     = 0x0101,
@@ -61,6 +64,7 @@ enum narc_status {
     NARC_NAME_TOO_LONG    = 19,
     NARC_CROSS_DEVICE     = 20,
     NARC_ILLEGAL_SEEK     = 21,
+    NARC_OUT_OF_RANGE     = 22,
 };
 
 enum narc_signal {
