@@ -16,6 +16,7 @@ INITRAMFS_ROOT := $(BUILD)/initramfs_root
 USER_BASE := 0x400000
 ROOTFS_FILES := $(shell find userland/rootfs -type f 2>/dev/null | sort)
 
+DEPFLAGS := -MMD -MP
 COMMON_CFLAGS := -std=gnu11 -O2 -Wall -Wextra -Werror -ffreestanding \
                  -fno-stack-protector -fno-pic -fno-pie -I kernel/include -I include
 COMMON_USER_CFLAGS := -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
@@ -63,8 +64,8 @@ else
 $(error unsupported ARCH: $(ARCH))
 endif
 
-CFLAGS := $(COMMON_CFLAGS) $(KERNEL_CFLAGS)
-ASFLAGS := -ffreestanding -fno-pic -fno-pie $(KERNEL_ASFLAGS)
+CFLAGS := $(COMMON_CFLAGS) $(KERNEL_CFLAGS) $(DEPFLAGS)
+ASFLAGS := -ffreestanding -fno-pic -fno-pie $(KERNEL_ASFLAGS) $(DEPFLAGS)
 USER_CFLAGS := $(COMMON_USER_CFLAGS) $(USER_ARCH_FLAGS) $(USER_LINK_FLAGS) \
                --sysroot=$(abspath $(SYSROOT)) -nostdinc \
                -isystem $(SYSROOT_INCLUDE) -isystem $(shell $(USER_CC) -print-file-name=include)
@@ -102,7 +103,7 @@ include recipes/edk2/RECIPE
 $(BUILD)/lib/libnarc/%.o: lib/libnarc/%.c include/narc/abi.h \
                          lib/libnarc/include/narc/narc.h
 	@mkdir -p $(dir $@)
-	$(USER_CC) $(LIBNARC_CFLAGS) $(USER_ARCH_FLAGS) -c $< -o $@
+	$(USER_CC) $(LIBNARC_CFLAGS) $(USER_ARCH_FLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(LIBNARC): $(LIBNARC_OBJ)
 	@mkdir -p $(dir $@)
@@ -113,7 +114,7 @@ libnarc: $(LIBNARC)
 
 $(BUILD)/lib/libc/%.o: lib/libc/%.c
 	@mkdir -p $(dir $@)
-	$(USER_CC) $(LIBC_CFLAGS) $(USER_ARCH_FLAGS) -c $< -o $@
+	$(USER_CC) $(LIBC_CFLAGS) $(USER_ARCH_FLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(LIBC_CRT0): lib/libc/crt/arch/$(ARCH)/crt0.S
 	@mkdir -p $(dir $@)
@@ -147,7 +148,7 @@ sysroot: $(SYSROOT_STAMP)
 
 $(BUILD)/userland/pablo/%.o: userland/pablo/%.c $(SYSROOT_STAMP) $(PABLO_HEADERS)
 	@mkdir -p $(dir $@)
-	$(USER_CC) $(USER_CFLAGS) -I userland/pablo/include -c $< -o $@
+	$(USER_CC) $(USER_CFLAGS) $(DEPFLAGS) -I userland/pablo/include -c $< -o $@
 
 $(USER_APP): $(PABLO_OBJ) $(SYSROOT_STAMP)
 	@mkdir -p $(dir $@)
@@ -220,3 +221,5 @@ clean:
 
 distclean: clean
 	rm -rf third_party $(CACHE)
+
+-include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
