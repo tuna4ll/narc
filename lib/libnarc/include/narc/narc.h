@@ -39,6 +39,9 @@ narc_result_t narc_dup2(int fd, int target);
 narc_result_t narc_map(size_t length, uint32_t flags);
 narc_result_t narc_unmap(void *address, size_t length);
 
+narc_result_t narc_clock_get(uint32_t clock);
+narc_result_t narc_sleep(uint64_t nanoseconds);
+
 #ifdef __cplusplus
 }
 #endif

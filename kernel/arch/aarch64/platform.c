@@ -5,18 +5,21 @@
 #include <kernel/syscall.h>
 #include <kernel/sched.h>
 #include <kernel/task.h>
+#include <kernel/time.h>
 #include <narc/abi.h>
 
 #define GICD_BASE 0x08000000ULL
 #define GICC_BASE 0x08010000ULL
 #define TIMER_IRQ 27
 #define SERIAL_IRQ 33
+#define RTC_BASE 0x09010000ULL
 
 extern char aarch64_vectors[];
 
 static volatile uint32_t *gicd;
 static volatile uint32_t *gicc;
 static uint64_t timer_ticks;
+static uint64_t clock_mult;
 
 static unsigned current_el(void) {
     uint64_t value;
@@ -66,8 +69,21 @@ void arch_init(uint64_t kernel_stack) {
 
     uint64_t frequency;
     __asm__ volatile ("mrs %0, cntfrq_el0" : "=r"(frequency));
-    timer_ticks = frequency / 100;
+    timer_ticks = frequency / TIME_HZ;
+    clock_mult = (NSEC_PER_SEC << 32) / frequency;
     timer_reset();
+}
+
+uint64_t arch_clock_ns(void) {
+    uint64_t count;
+    __asm__ volatile ("isb; mrs %0, cntvct_el0" : "=r"(count));
+    return (uint64_t)(((unsigned __int128)count * clock_mult) >> 32);
+}
+
+int64_t arch_rtc_seconds(void) {
+    volatile uint32_t *rtc = phys_to_virt(RTC_BASE);
+    vmm_map_kernel((uint64_t)(uintptr_t)rtc, RTC_BASE, VMM_WRITE | VMM_DEVICE);
+    return rtc[0];
 }
 
 void arch_halt(void) {
@@ -169,7 +185,7 @@ void aarch64_irq(struct task_frame *frame) {
     if (irq >= 1020) return;
     if (irq == TIMER_IRQ) {
         timer_reset();
-        sched_tick();
+        time_tick();
     } else if (irq == SERIAL_IRQ) {
         serial_interrupt();
     }

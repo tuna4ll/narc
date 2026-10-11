@@ -5,17 +5,20 @@
 #include <kernel/sched.h>
 #include <kernel/serial.h>
 #include <kernel/task.h>
+#include <kernel/time.h>
 #include <narc/abi.h>
 
 #define PLIC_BASE 0x0c000000ULL
 #define PLIC_CONTEXT 1
 #define SERIAL_IRQ 10
+#define RTC_BASE 0x00101000ULL
+#define TIMEBASE_HZ 10000000ULL
 
 extern char riscv_trap_entry[];
 
 static volatile uint32_t *plic;
 
-static uint64_t timer_ticks = 100000;
+static const uint64_t timer_ticks = TIMEBASE_HZ / TIME_HZ;
 
 static void timer_reset(void) {
     uint64_t now;
@@ -37,6 +40,20 @@ void arch_init(uint64_t kernel_stack) {
                       : : "r"(sie), "r"(3ULL << 13));
     arch_irq_disable();
     timer_reset();
+}
+
+uint64_t arch_clock_ns(void) {
+    uint64_t now;
+    __asm__ volatile ("rdtime %0" : "=r"(now));
+    return now * (NSEC_PER_SEC / TIMEBASE_HZ);
+}
+
+int64_t arch_rtc_seconds(void) {
+    volatile uint32_t *rtc = phys_to_virt(RTC_BASE);
+    vmm_map_kernel((uint64_t)(uintptr_t)rtc, RTC_BASE, VMM_WRITE | VMM_DEVICE);
+    uint64_t low = rtc[0];
+    uint64_t high = rtc[1];
+    return (int64_t)(((high << 32) | low) / NSEC_PER_SEC);
 }
 
 void arch_halt(void) {
@@ -130,7 +147,7 @@ void riscv_trap(struct task_frame *frame) {
     __asm__ volatile ("csrr %0, scause" : "=r"(cause));
     if (cause == ((1ULL << 63) | 5)) {
         timer_reset();
-        sched_tick();
+        time_tick();
         if (arch_frame_from_user(frame)) sched_user_return();
         return;
     }

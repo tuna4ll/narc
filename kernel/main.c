@@ -4,6 +4,7 @@
 #include <kernel/mm.h>
 #include <kernel/sched.h>
 #include <kernel/serial.h>
+#include <kernel/time.h>
 #include <kernel/tty.h>
 #include <kernel/user.h>
 #include <kernel/vfs.h>
@@ -66,6 +67,7 @@ void _start(void) {
         arch_halt();
     }
     console_puts("[boot] Limine framebuffer ready\n");
+    time_init();
     struct limine_file *initramfs = module_request.response->modules[0];
     if (vfs_init(initramfs->address, initramfs->size) != 0) {
         console_puts("[panic] invalid initramfs\n");

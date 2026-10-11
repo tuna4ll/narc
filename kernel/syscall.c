@@ -6,6 +6,7 @@
 #include <kernel/string.h>
 #include <kernel/syscall.h>
 #include <kernel/task.h>
+#include <kernel/time.h>
 #include <kernel/uaccess.h>
 #include <kernel/user.h>
 #include <kernel/vfs.h>
@@ -392,6 +393,19 @@ static struct kernel_result handle_unmap(uint64_t address, uint64_t length) {
     return result_ok(0);
 }
 
+static struct kernel_result handle_clock_get(uint64_t clock) {
+    if (clock == NARC_CLOCK_REALTIME) return result_ok((uint64_t)time_realtime_ns());
+    if (clock == NARC_CLOCK_MONOTONIC) return result_ok(time_monotonic_ns());
+    return result_error(NARC_INVALID_ARGUMENT);
+}
+
+static struct kernel_result handle_sleep(uint64_t nanoseconds) {
+    uint64_t now = time_monotonic_ns();
+    uint64_t deadline = nanoseconds > UINT64_MAX - now ? UINT64_MAX : now + nanoseconds;
+    time_sleep_until(deadline);
+    return result_ok(0);
+}
+
 static uint32_t handle_exec(struct task_frame *frame, uint64_t path_address,
                             uint64_t argv_address, uint64_t envp_address) {
     char *path = copy_user_string(path_address);
@@ -498,6 +512,12 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return;
     case NARC_SYS_UNMAP:
         return_result(frame, handle_unmap(a1, a2));
+        return;
+    case NARC_SYS_CLOCK_GET:
+        return_result(frame, handle_clock_get(a1));
+        return;
+    case NARC_SYS_SLEEP:
+        return_result(frame, handle_sleep(a1));
         return;
     default:
         return_result(frame, result_error(NARC_NOT_SUPPORTED));

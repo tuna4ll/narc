@@ -39,6 +39,9 @@ enum narc_syscall {
 
     NARC_SYS_MAP       = 0x0200,
     NARC_SYS_UNMAP     = 0x0201,
+
+    NARC_SYS_CLOCK_GET = 0x0300,
+    NARC_SYS_SLEEP     = 0x0301,
 };
 
 enum narc_status {
@@ -121,6 +124,11 @@ enum narc_seek_origin {
 enum narc_map_flags {
     NARC_MAP_READ  = 1u << 0,
     NARC_MAP_WRITE = 1u << 1,
+};
+
+enum narc_clock {
+    NARC_CLOCK_REALTIME  = 0,
+    NARC_CLOCK_MONOTONIC = 1,
 };
 
 enum narc_file_type {
