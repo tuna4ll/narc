@@ -21,6 +21,11 @@ enum narc_syscall {
     NARC_SYS_CHDIR     = 0x0007,
     NARC_SYS_FCHDIR    = 0x0008,
     NARC_SYS_GETCWD    = 0x0009,
+    NARC_SYS_GETPPID   = 0x000a,
+    NARC_SYS_SETPGID   = 0x000b,
+    NARC_SYS_GETPGID   = 0x000c,
+    NARC_SYS_SETSID    = 0x000d,
+    NARC_SYS_GETSID    = 0x000e,
 
     NARC_SYS_OPEN      = 0x0100,
     NARC_SYS_CLOSE     = 0x0101,
@@ -159,6 +164,12 @@ typedef struct narc_siginfo {
     uint64_t address;
     uint64_t reserved;
 } narc_siginfo_t;
+
+enum narc_wait_flags {
+    NARC_WAIT_NOHANG    = 1u << 0,
+    NARC_WAIT_UNTRACED  = 1u << 1,
+    NARC_WAIT_CONTINUED = 1u << 3,
+};
 
 enum narc_open_flags {
     NARC_OPEN_READ      = 1u << 0,

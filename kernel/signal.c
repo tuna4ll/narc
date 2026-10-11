@@ -47,9 +47,12 @@ static int discarded(struct signal_state *state, int signal) {
     if (state->blocked & SIG_BIT(signal)) return 0;
     uint64_t handler = state->actions[signal].handler;
     if (handler == NARC_SIG_IGN) return 1;
-    return handler == NARC_SIG_DFL && defaults[signal] != SIGNAL_TERM &&
-           defaults[signal] != SIGNAL_CORE;
+    return handler == NARC_SIG_DFL && (defaults[signal] == SIGNAL_IGNORE ||
+                                       defaults[signal] == SIGNAL_CONT);
 }
+
+#define STOP_SIGNALS (SIG_BIT(NARC_SIGSTOP) | SIG_BIT(NARC_SIGTSTP) | \
+                      SIG_BIT(NARC_SIGTTIN) | SIG_BIT(NARC_SIGTTOU))
 
 void signal_fork(struct task *child, struct task *parent) {
     unsigned long flags = spin_lock_irqsave(&signal_lock);
@@ -76,6 +79,8 @@ int signal_send(struct task *task, int signal, const narc_siginfo_t *info) {
     unsigned long flags = spin_lock_irqsave(&signal_lock);
     int wake = 0;
     int protected = task->pid == 1 && state->actions[signal].handler == NARC_SIG_DFL;
+    if (signal == NARC_SIGCONT) state->pending &= ~STOP_SIGNALS;
+    if (STOP_SIGNALS & SIG_BIT(signal)) state->pending &= ~SIG_BIT(NARC_SIGCONT);
     if (!task->exited && !protected && !discarded(state, signal)) {
         if (!(state->pending & SIG_BIT(signal))) {
             state->info[signal] = info ? *info : (narc_siginfo_t) { .code = NARC_SI_KERNEL };
@@ -159,6 +164,9 @@ void signal_deliver(struct task_frame *frame) {
         if (action.handler == NARC_SIG_DFL) {
             if (defaults[signal] == SIGNAL_TERM) task_exit_signal(signal);
             if (defaults[signal] == SIGNAL_CORE) task_exit_signal(signal | 0x80);
+            if (defaults[signal] == SIGNAL_STOP &&
+                (signal == NARC_SIGSTOP || !task_group_orphaned(self->pgid)))
+                task_stop(signal);
             continue;
         }
 

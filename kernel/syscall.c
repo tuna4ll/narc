@@ -452,6 +452,21 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         if (status != NARC_OK) return_result(frame, result_error(status));
         return;
     }
+    case NARC_SYS_GETPPID:
+        return_result(frame, result_ok((uint64_t)task_ppid()));
+        return;
+    case NARC_SYS_SETPGID:
+        return_result(frame, result_status(task_setpgid((int)a1, (int)a2)));
+        return;
+    case NARC_SYS_GETPGID:
+        return_result(frame, result_status(task_getpgid((int)a1)));
+        return;
+    case NARC_SYS_SETSID:
+        return_result(frame, result_status(task_setsid()));
+        return;
+    case NARC_SYS_GETSID:
+        return_result(frame, result_status(task_getsid((int)a1)));
+        return;
     case NARC_SYS_CHDIR:
         return_result(frame, handle_chdir(a1, a2));
         return;

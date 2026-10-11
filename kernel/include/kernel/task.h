@@ -18,11 +18,12 @@ struct vnode;
 struct task {
     struct task *next;
     struct task *run_next;
-    int pid, ppid;
+    int pid, ppid, pgid, sid;
     int state;
     int on_cpu, on_rq;
     int interruptible;
     int exited, detached, wait_status;
+    int stopped, stop_signal, stop_reported, continued;
     uint64_t context;
     uint64_t kstack_top;
     struct task_frame *frame;
@@ -46,6 +47,14 @@ void task_exec(struct task_frame *frame, struct address_space *space, uint64_t p
 void task_exit(int status) __attribute__((noreturn));
 void task_exit_signal(int signal) __attribute__((noreturn));
 int task_kill(int pid, int signal);
+int task_signal_group(int pgid, int signal);
+int task_group_orphaned(int pgid);
+void task_stop(int signal);
+int task_ppid(void);
+int task_setpgid(int pid, int pgid);
+int task_getpgid(int pid);
+int task_setsid(void);
+int task_getsid(int pid);
 int task_pid(void);
 uint64_t task_fs_base(void);
 void task_set_fs_base(uint64_t value);
