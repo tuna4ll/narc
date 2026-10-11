@@ -73,8 +73,10 @@ USER_LDFLAGS := $(COMMON_USER_LDFLAGS) $(USER_LINK_FLAGS)
 LINKER := kernel/arch/$(ARCH)/linker.ld
 LIBNARC_COMMON_C := $(shell find lib/libnarc/src -name '*.c' | sort)
 LIBNARC_ARCH_C := lib/libnarc/arch/$(ARCH)/syscall.c
+LIBNARC_ARCH_S := $(shell find lib/libnarc/arch/$(ARCH) -name '*.S' | sort)
 LIBNARC_C := $(LIBNARC_COMMON_C) $(LIBNARC_ARCH_C)
-LIBNARC_OBJ := $(patsubst lib/libnarc/%.c,$(BUILD)/lib/libnarc/%.o,$(LIBNARC_C))
+LIBNARC_OBJ := $(patsubst lib/libnarc/%.c,$(BUILD)/lib/libnarc/%.o,$(LIBNARC_C)) \
+               $(patsubst lib/libnarc/%.S,$(BUILD)/lib/libnarc/%.o,$(LIBNARC_ARCH_S))
 LIBNARC := $(BUILD)/lib/libnarc.a
 LIBC_C := $(shell find lib/libc/src -name '*.c' | sort)
 LIBC_OBJ := $(patsubst lib/libc/%.c,$(BUILD)/lib/libc/%.o,$(LIBC_C))
@@ -104,6 +106,10 @@ $(BUILD)/lib/libnarc/%.o: lib/libnarc/%.c include/narc/abi.h \
                          lib/libnarc/include/narc/narc.h
 	@mkdir -p $(dir $@)
 	$(USER_CC) $(LIBNARC_CFLAGS) $(USER_ARCH_FLAGS) $(DEPFLAGS) -c $< -o $@
+
+$(BUILD)/lib/libnarc/%.o: lib/libnarc/%.S
+	@mkdir -p $(dir $@)
+	$(USER_CC) -ffreestanding -fno-pic -fno-pie $(USER_ARCH_FLAGS) -c $< -o $@
 
 $(LIBNARC): $(LIBNARC_OBJ)
 	@mkdir -p $(dir $@)

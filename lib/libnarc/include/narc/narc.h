@@ -39,6 +39,14 @@ narc_result_t narc_dup2(int fd, int target);
 narc_result_t narc_map(size_t length, uint32_t flags);
 narc_result_t narc_unmap(void *address, size_t length);
 
+narc_result_t narc_kill(int pid, int signal);
+narc_result_t narc_sigaction(int signal, const narc_sigaction_t *action,
+                             narc_sigaction_t *old_action);
+narc_result_t narc_sigmask(uint32_t how, uint64_t set);
+narc_result_t narc_sigpending(void);
+narc_result_t narc_sigsuspend(uint64_t mask);
+void narc_signal_return(void);
+
 narc_result_t narc_clock_get(uint32_t clock);
 narc_result_t narc_sleep(uint64_t nanoseconds);
 
