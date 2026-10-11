@@ -25,5 +25,8 @@ pid_t fork(void);
 int execv(const char *path, char *const argv[]);
 int execve(const char *path, char *const argv[], char *const envp[]);
 int unlink(const char *path);
+int chdir(const char *path);
+int fchdir(int fd);
+char *getcwd(char *buffer, size_t size);
 int rmdir(const char *path);
 _Noreturn void _exit(int status);

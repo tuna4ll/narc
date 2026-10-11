@@ -24,6 +24,7 @@ static int status_errno(uint32_t status) {
     case NARC_NAME_TOO_LONG:    return ENAMETOOLONG;
     case NARC_CROSS_DEVICE:     return EXDEV;
     case NARC_ILLEGAL_SEEK:     return ESPIPE;
+    case NARC_OUT_OF_RANGE:     return ERANGE;
     default:                    return EIO;
     }
 }

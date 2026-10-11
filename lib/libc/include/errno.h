@@ -22,6 +22,7 @@
 #define EPIPE  32
 #define EXDEV  18
 #define ESPIPE 29
+#define ERANGE 34
 #define ENAMETOOLONG 36
 
 int *__errno_location(void);
