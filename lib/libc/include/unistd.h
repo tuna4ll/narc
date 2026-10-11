@@ -29,4 +29,6 @@ int chdir(const char *path);
 int fchdir(int fd);
 char *getcwd(char *buffer, size_t size);
 int rmdir(const char *path);
+unsigned int sleep(unsigned int seconds);
+int usleep(useconds_t microseconds);
 _Noreturn void _exit(int status);
