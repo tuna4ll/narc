@@ -25,6 +25,9 @@ static int status_errno(uint32_t status) {
     case NARC_CROSS_DEVICE:     return EXDEV;
     case NARC_ILLEGAL_SEEK:     return ESPIPE;
     case NARC_OUT_OF_RANGE:     return ERANGE;
+    case NARC_INTERRUPTED:      return EINTR;
+    case NARC_NO_PROCESS:       return ESRCH;
+    case NARC_NOT_PERMITTED:    return EPERM;
     default:                    return EIO;
     }
 }
