@@ -3,7 +3,7 @@
 #include <sys/wait.h>
 
 pid_t waitpid(pid_t pid, int *status, int options) {
-    if (options & ~WNOHANG) {
+    if (options & ~(WNOHANG | WUNTRACED | WCONTINUED)) {
         errno = EINVAL;
         return -1;
     }

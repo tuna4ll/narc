@@ -102,3 +102,4 @@ int sigdelset(sigset_t *set, int signal);
 int sigismember(const sigset_t *set, int signal);
 int kill(pid_t pid, int signal);
 int raise(int signal);
+int killpg(pid_t group, int signal);
