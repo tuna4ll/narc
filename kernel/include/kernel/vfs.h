@@ -27,6 +27,8 @@
 #define VFS_OPEN_TRUNCATE  (1u << 4)
 #define VFS_OPEN_EXCLUSIVE (1u << 5)
 #define VFS_OPEN_APPEND    (1u << 6)
+#define VFS_OPEN_NONBLOCK  (1u << 7)
+#define VFS_STATUS_FLAGS   (VFS_OPEN_READ | VFS_OPEN_WRITE | VFS_OPEN_APPEND | VFS_OPEN_NONBLOCK)
 
 struct vnode;
 struct mount;

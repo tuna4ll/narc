@@ -136,11 +136,13 @@ static struct kernel_result handle_write(uint64_t fd, uint64_t buffer, uint64_t 
     return result;
 }
 
-static struct kernel_result handle_open(uint64_t address, uint64_t length, uint64_t flags) {
+static struct kernel_result handle_open(uint64_t address, uint64_t length, uint64_t flags,
+                                        uint64_t mode) {
     const uint64_t known = NARC_OPEN_READ | NARC_OPEN_WRITE |
                            NARC_OPEN_CREATE | NARC_OPEN_DIRECTORY |
                            NARC_OPEN_TRUNCATE | NARC_OPEN_EXCLUSIVE |
-                           NARC_OPEN_APPEND;
+                           NARC_OPEN_APPEND | NARC_OPEN_NONBLOCK |
+                           NARC_OPEN_CLOEXEC | NARC_OPEN_NOCTTY;
     if (!length || (flags & ~known) ||
         !(flags & (NARC_OPEN_READ | NARC_OPEN_WRITE)) ||
         ((flags & NARC_OPEN_TRUNCATE) && !(flags & NARC_OPEN_WRITE)))
@@ -158,11 +160,13 @@ static struct kernel_result handle_open(uint64_t address, uint64_t length, uint6
     if (flags & NARC_OPEN_TRUNCATE) native_flags |= VFS_OPEN_TRUNCATE;
     if (flags & NARC_OPEN_EXCLUSIVE) native_flags |= VFS_OPEN_EXCLUSIVE;
     if (flags & NARC_OPEN_APPEND) native_flags |= VFS_OPEN_APPEND;
+    if (flags & NARC_OPEN_NONBLOCK) native_flags |= VFS_OPEN_NONBLOCK;
     struct open_file *open;
-    int status = file_open(task_cwd(), path, native_flags, 0666, &open);
+    uint32_t create_mode = (uint32_t)mode & 07777 & ~task_umask(0, 0);
+    int status = file_open(task_cwd(), path, native_flags, create_mode, &open);
     kfree(path);
     if (status) return result_error((uint32_t)-status);
-    int fd = fd_install(task_files(), open, 3);
+    int fd = fd_install(task_files(), open, 0, (flags & NARC_OPEN_CLOEXEC) ? FD_CLOEXEC : 0);
     if (fd < 0) {
         file_put(open);
         return result_error(NARC_NO_MEMORY);
@@ -174,7 +178,7 @@ static struct kernel_result handle_mkdir(uint64_t address, uint64_t length, uint
     char *path;
     uint32_t status = copy_path(&path, address, length);
     if (status != NARC_OK) return result_error(status);
-    int result = vfs_mkdir(task_cwd(), path, (uint32_t)mode);
+    int result = vfs_mkdir(task_cwd(), path, (uint32_t)mode & 07777 & ~task_umask(0, 0));
     kfree(path);
     return result_status(result);
 }
@@ -305,19 +309,26 @@ static struct kernel_result handle_read_dir(uint64_t fd, uint64_t address) {
     return result_ok(1);
 }
 
-static struct kernel_result handle_pipe(uint64_t address) {
+static struct kernel_result handle_pipe(uint64_t address, uint64_t flags) {
+    if (flags & ~(uint64_t)(NARC_OPEN_CLOEXEC | NARC_OPEN_NONBLOCK))
+        return result_error(NARC_INVALID_ARGUMENT);
     struct open_file *read_end, *write_end;
     if (!vmm_user_range_ok(vmm_space_current(), address, 2 * sizeof(int32_t), 1))
         return result_error(NARC_BAD_ADDRESS);
     if (pipe_create(&read_end, &write_end) != 0) return result_error(NARC_NO_MEMORY);
+    if (flags & NARC_OPEN_NONBLOCK) {
+        read_end->flags |= VFS_OPEN_NONBLOCK;
+        write_end->flags |= VFS_OPEN_NONBLOCK;
+    }
+    uint32_t fd_flags = (flags & NARC_OPEN_CLOEXEC) ? FD_CLOEXEC : 0;
     struct fd_table *table = task_files();
-    int32_t fds[2] = { fd_install(table, read_end, 0), -1 };
-    if (fds[0] >= 0) fds[1] = fd_install(table, write_end, 0);
+    int32_t fds[2] = { fd_install(table, read_end, 0, fd_flags), -1 };
+    if (fds[0] >= 0) fds[1] = fd_install(table, write_end, 0, fd_flags);
     if (fds[1] < 0) {
         if (fds[0] >= 0) fd_close(table, fds[0]);
         else file_put(read_end);
         file_put(write_end);
-        return result_error(NARC_NO_MEMORY);
+        return result_error(NARC_TOO_MANY_HANDLES);
     }
     if (copy_to_user(address, fds, sizeof(fds)) != 0) {
         fd_close(table, fds[0]);
@@ -329,14 +340,71 @@ static struct kernel_result handle_pipe(uint64_t address) {
 
 static struct kernel_result handle_dup(uint64_t fd, uint64_t minimum) {
     if (minimum > INT32_MAX) return result_error(NARC_INVALID_ARGUMENT);
-    int result = fd_dup(task_files(), (int)fd, (int)minimum);
+    int result = fd_dup(task_files(), (int)fd, (int)minimum, 0);
     return result < 0 ? result_error(NARC_BAD_HANDLE) : result_ok((uint64_t)result);
 }
 
 static struct kernel_result handle_dup2(uint64_t fd, uint64_t target) {
-    if (target > INT32_MAX) return result_error(NARC_BAD_HANDLE);
+    if (target >= FD_LIMIT) return result_error(NARC_BAD_HANDLE);
     int result = fd_dup2(task_files(), (int)fd, (int)target);
     return result < 0 ? result_error(NARC_BAD_HANDLE) : result_ok((uint64_t)result);
+}
+
+static uint32_t native_status_flags(uint32_t flags) {
+    uint32_t result = 0;
+    if (flags & VFS_OPEN_READ) result |= NARC_OPEN_READ;
+    if (flags & VFS_OPEN_WRITE) result |= NARC_OPEN_WRITE;
+    if (flags & VFS_OPEN_APPEND) result |= NARC_OPEN_APPEND;
+    if (flags & VFS_OPEN_NONBLOCK) result |= NARC_OPEN_NONBLOCK;
+    return result;
+}
+
+static struct kernel_result handle_fcntl(uint64_t fd, uint64_t command, uint64_t argument) {
+    struct fd_table *table = task_files();
+    switch (command) {
+    case NARC_FCNTL_DUPFD:
+    case NARC_FCNTL_DUPFD_CLOEXEC: {
+        if (argument >= FD_LIMIT) return result_error(NARC_INVALID_ARGUMENT);
+        int result = fd_dup(table, (int)fd, (int)argument,
+                            command == NARC_FCNTL_DUPFD_CLOEXEC ? FD_CLOEXEC : 0);
+        return result < 0 ? result_error(fd_get_flags(table, (int)fd) < 0 ? NARC_BAD_HANDLE :
+                                                                             NARC_TOO_MANY_HANDLES)
+                          : result_ok((uint64_t)result);
+    }
+    case NARC_FCNTL_GETFD: {
+        int flags = fd_get_flags(table, (int)fd);
+        return flags < 0 ? result_error(NARC_BAD_HANDLE) : result_ok((uint64_t)flags);
+    }
+    case NARC_FCNTL_SETFD:
+        return fd_set_flags(table, (int)fd, (uint32_t)argument) ? result_error(NARC_BAD_HANDLE)
+                                                                : result_ok(0);
+    case NARC_FCNTL_GETFL:
+    case NARC_FCNTL_SETFL: {
+        struct open_file *open = fd_get(table, (int)fd);
+        if (!open) return result_error(NARC_BAD_HANDLE);
+        uint32_t flags = native_status_flags(open->flags);
+        if (command == NARC_FCNTL_SETFL) {
+            uint32_t mutable = VFS_OPEN_APPEND | VFS_OPEN_NONBLOCK;
+            uint32_t next = 0;
+            if (argument & NARC_OPEN_APPEND) next |= VFS_OPEN_APPEND;
+            if (argument & NARC_OPEN_NONBLOCK) next |= VFS_OPEN_NONBLOCK;
+            __atomic_store_n(&open->flags, (open->flags & ~mutable) | next, __ATOMIC_RELAXED);
+            flags = 0;
+        }
+        file_put(open);
+        return result_ok(flags);
+    }
+    default:
+        return result_error(NARC_INVALID_ARGUMENT);
+    }
+}
+
+static struct kernel_result handle_ioctl(uint64_t fd, uint64_t request, uint64_t argument) {
+    struct open_file *open = fd_get(task_files(), (int)fd);
+    if (!open) return result_error(NARC_BAD_HANDLE);
+    long result = file_ioctl(open, (uint32_t)request, argument);
+    file_put(open);
+    return result_status(result);
 }
 
 static uint64_t page_align(uint64_t value) {
@@ -477,7 +545,10 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return_result(frame, handle_getcwd(a1, a2));
         return;
     case NARC_SYS_OPEN:
-        return_result(frame, handle_open(a1, a2, a3));
+        return_result(frame, handle_open(a1, a2, a3, arch_syscall_arg(frame, 3)));
+        return;
+    case NARC_SYS_UMASK:
+        return_result(frame, result_ok(task_umask((uint32_t)a1, 1)));
         return;
     case NARC_SYS_CLOSE:
         return_result(frame, handle_close(a1));
@@ -512,13 +583,19 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return;
     }
     case NARC_SYS_PIPE:
-        return_result(frame, handle_pipe(a1));
+        return_result(frame, handle_pipe(a1, a2));
         return;
     case NARC_SYS_DUP:
         return_result(frame, handle_dup(a1, a2));
         return;
     case NARC_SYS_DUP2:
         return_result(frame, handle_dup2(a1, a2));
+        return;
+    case NARC_SYS_FCNTL:
+        return_result(frame, handle_fcntl(a1, a2, a3));
+        return;
+    case NARC_SYS_IOCTL:
+        return_result(frame, handle_ioctl(a1, a2, a3));
         return;
     case NARC_SYS_MAP:
         return_result(frame, handle_map(a1, a2));
@@ -557,7 +634,8 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
 }
 
 static int restartable(uint64_t id) {
-    return id == NARC_SYS_READ || id == NARC_SYS_WRITE || id == NARC_SYS_WAIT;
+    return id == NARC_SYS_READ || id == NARC_SYS_WRITE || id == NARC_SYS_WAIT ||
+           id == NARC_SYS_IOCTL;
 }
 
 void syscall_dispatch(struct task_frame *frame) {

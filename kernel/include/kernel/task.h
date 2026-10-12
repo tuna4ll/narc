@@ -31,6 +31,7 @@ struct task {
     uint64_t fs_base, mmap_next;
     struct fd_table *files;
     struct vnode *cwd;
+    uint32_t umask;
     struct wait_queue child_exit;
     struct signal_state signals;
     int syscall_restart;
@@ -62,4 +63,5 @@ uint64_t task_mmap_next(void);
 void task_set_mmap_next(uint64_t value);
 struct fd_table *task_files(void);
 struct vnode *task_cwd(void);
+uint32_t task_umask(uint32_t mask, int set);
 void task_set_cwd(struct vnode *node);

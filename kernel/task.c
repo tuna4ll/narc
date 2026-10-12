@@ -103,7 +103,7 @@ static int init_fds(struct task *task) {
     if (!task->files) return -1;
     for (int fd = 0; fd < 3; fd++) {
         struct open_file *open = tty_open();
-        if (!open || fd_install(task->files, open, fd) != fd) {
+        if (!open || fd_install(task->files, open, fd, 0) != fd) {
             file_put(open);
             return -1;
         }
@@ -119,6 +119,7 @@ struct task *task_create(void) {
         return 0;
     }
     task->cwd = vnode_get(vfs_root());
+    task->umask = 022;
     task->mmap_next = USER_MMAP_BASE;
     arch_task_frame_init(task->frame);
     arch_task_state_init(task->arch_state);
@@ -144,6 +145,7 @@ int task_fork(struct task_frame *frame) {
     child->pgid = parent->pgid;
     child->sid = parent->sid;
     child->cwd = vnode_get(parent->cwd);
+    child->umask = parent->umask;
     child->mmap_next = parent->mmap_next;
     child->fs_base = parent->fs_base;
     signal_fork(child, parent);
@@ -234,6 +236,7 @@ long task_wait(int pid, uint64_t status, int options) {
 
 void task_exec(struct task_frame *frame, struct address_space *space, uint64_t pc, uint64_t sp) {
     struct task *self = task_current();
+    fd_table_exec(self->files);
     struct address_space old = self->space;
     self->space = *space;
     self->fs_base = 0;
@@ -468,6 +471,13 @@ void task_set_mmap_next(uint64_t value) { task_current()->mmap_next = value; }
 
 struct fd_table *task_files(void) { return task_current()->files; }
 struct vnode *task_cwd(void) { return task_current()->cwd; }
+
+uint32_t task_umask(uint32_t mask, int set) {
+    struct task *self = task_current();
+    uint32_t old = self->umask;
+    if (set) self->umask = mask & 0777;
+    return old;
+}
 
 void task_set_cwd(struct vnode *node) {
     struct task *self = task_current();

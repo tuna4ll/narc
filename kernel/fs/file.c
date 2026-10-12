@@ -46,7 +46,7 @@ int file_open(struct vnode *base, const char *path, uint32_t flags, uint32_t mod
         return -NARC_NO_MEMORY;
     }
     open->node = node;
-    open->flags = flags & (VFS_OPEN_READ | VFS_OPEN_WRITE | VFS_OPEN_APPEND);
+    open->flags = flags & VFS_STATUS_FLAGS;
     *result = open;
     return 0;
 }
@@ -89,6 +89,10 @@ long file_seek(struct open_file *open, int64_t offset, int origin) {
     return result;
 }
 
+long file_ioctl(struct open_file *open, uint32_t request, uint64_t argument) {
+    return open->ops->ioctl ? open->ops->ioctl(open, request, argument) : -NARC_NOT_A_TTY;
+}
+
 int file_readdir(struct open_file *open, struct vfs_dirent *entry) {
     if (!open->node) return -NARC_NOT_DIRECTORY;
     mutex_lock(&open->lock);
@@ -107,13 +111,16 @@ struct fd_table *fd_table_clone(struct fd_table *table) {
     struct fd_table *clone = fd_table_create();
     if (!clone) return 0;
     spin_lock(&table->lock);
-    clone->files = kmalloc((size_t)table->count * sizeof(*clone->files));
-    if (clone->files || !table->count) {
+    clone->entries = kmalloc((size_t)table->count * sizeof(*clone->entries));
+    if (clone->entries || !table->count) {
         clone->count = table->count;
-        for (int fd = 0; fd < clone->count; fd++) clone->files[fd] = file_get(table->files[fd]);
+        for (int fd = 0; fd < clone->count; fd++) {
+            clone->entries[fd] = table->entries[fd];
+            file_get(clone->entries[fd].file);
+        }
     }
     spin_unlock(&table->lock);
-    if (!clone->files && table->count) {
+    if (!clone->entries && table->count) {
         kfree(clone);
         return 0;
     }
@@ -122,62 +129,84 @@ struct fd_table *fd_table_clone(struct fd_table *table) {
 
 void fd_table_release(struct fd_table *table) {
     if (!table) return;
-    for (int fd = 0; fd < table->count; fd++) file_put(table->files[fd]);
-    kfree(table->files);
+    for (int fd = 0; fd < table->count; fd++) file_put(table->entries[fd].file);
+    kfree(table->entries);
     kfree(table);
+}
+
+void fd_table_exec(struct fd_table *table) {
+    for (int fd = 0; fd < table->count; fd++) {
+        spin_lock(&table->lock);
+        struct open_file *open = 0;
+        if (table->entries[fd].flags & FD_CLOEXEC) {
+            open = table->entries[fd].file;
+            table->entries[fd] = (struct fd_entry) { 0 };
+        }
+        spin_unlock(&table->lock);
+        file_put(open);
+    }
 }
 
 static int reserve(struct fd_table *table, int fd) {
     if (fd < table->count) return 0;
-    if (fd == INT32_MAX) return -1;
+    if (fd >= FD_LIMIT) return -1;
     int count = table->count ? table->count : 8;
-    while (count <= fd) count = count > INT32_MAX / 2 ? INT32_MAX : count * 2;
-    struct open_file **files = krealloc(table->files, (size_t)count * sizeof(*files));
-    if (!files) return -1;
-    memset(files + table->count, 0, (size_t)(count - table->count) * sizeof(*files));
-    table->files = files;
+    while (count <= fd) count *= 2;
+    if (count > FD_LIMIT) count = FD_LIMIT;
+    struct fd_entry *entries = krealloc(table->entries, (size_t)count * sizeof(*entries));
+    if (!entries) return -1;
+    memset(entries + table->count, 0, (size_t)(count - table->count) * sizeof(*entries));
+    table->entries = entries;
     table->count = count;
     return 0;
 }
 
-static int install_locked(struct fd_table *table, struct open_file *open, int minimum) {
+static int install_locked(struct fd_table *table, struct open_file *open, int minimum,
+                          uint32_t flags) {
     int fd = minimum;
-    while (fd < table->count && table->files[fd]) fd++;
+    while (fd < table->count && table->entries[fd].file) fd++;
     if (reserve(table, fd) != 0) return -1;
-    table->files[fd] = open;
+    table->entries[fd] = (struct fd_entry) { open, flags };
     return fd;
 }
 
-int fd_install(struct fd_table *table, struct open_file *open, int minimum) {
+int fd_install(struct fd_table *table, struct open_file *open, int minimum, uint32_t flags) {
     if (minimum < 0) return -1;
     spin_lock(&table->lock);
-    int fd = install_locked(table, open, minimum);
+    int fd = install_locked(table, open, minimum, flags);
     spin_unlock(&table->lock);
     return fd;
 }
 
+static struct fd_entry *entry_locked(struct fd_table *table, int fd) {
+    return fd >= 0 && fd < table->count && table->entries[fd].file ? &table->entries[fd] : 0;
+}
+
 struct open_file *fd_get(struct fd_table *table, int fd) {
     spin_lock(&table->lock);
-    struct open_file *open = fd >= 0 && fd < table->count ? file_get(table->files[fd]) : 0;
+    struct fd_entry *entry = entry_locked(table, fd);
+    struct open_file *open = entry ? file_get(entry->file) : 0;
     spin_unlock(&table->lock);
     return open;
 }
 
 int fd_close(struct fd_table *table, int fd) {
     spin_lock(&table->lock);
-    struct open_file *open = fd >= 0 && fd < table->count ? table->files[fd] : 0;
-    if (open) table->files[fd] = 0;
+    struct fd_entry *entry = entry_locked(table, fd);
+    struct open_file *open = entry ? entry->file : 0;
+    if (entry) *entry = (struct fd_entry) { 0 };
     spin_unlock(&table->lock);
     if (!open) return -1;
     file_put(open);
     return 0;
 }
 
-int fd_dup(struct fd_table *table, int fd, int minimum) {
-    if (minimum < 0) return -1;
+int fd_dup(struct fd_table *table, int fd, int minimum, uint32_t flags) {
+    if (minimum < 0 || minimum >= FD_LIMIT) return -1;
     spin_lock(&table->lock);
-    struct open_file *open = fd >= 0 && fd < table->count ? table->files[fd] : 0;
-    int result = open ? install_locked(table, open, minimum) : -1;
+    struct fd_entry *entry = entry_locked(table, fd);
+    struct open_file *open = entry ? entry->file : 0;
+    int result = open ? install_locked(table, open, minimum, flags) : -1;
     if (result >= 0) file_get(open);
     spin_unlock(&table->lock);
     return result;
@@ -185,17 +214,34 @@ int fd_dup(struct fd_table *table, int fd, int minimum) {
 
 int fd_dup2(struct fd_table *table, int oldfd, int newfd) {
     spin_lock(&table->lock);
-    struct open_file *open = oldfd >= 0 && oldfd < table->count ? table->files[oldfd] : 0;
+    struct fd_entry *entry = entry_locked(table, oldfd);
+    struct open_file *open = entry ? entry->file : 0;
     struct open_file *old = 0;
     int result = -1;
     if (open && newfd >= 0 && (oldfd == newfd || reserve(table, newfd) == 0)) {
         result = newfd;
         if (oldfd != newfd) {
-            old = table->files[newfd];
-            table->files[newfd] = file_get(open);
+            old = table->entries[newfd].file;
+            table->entries[newfd] = (struct fd_entry) { file_get(open), 0 };
         }
     }
     spin_unlock(&table->lock);
     file_put(old);
     return result;
+}
+
+int fd_get_flags(struct fd_table *table, int fd) {
+    spin_lock(&table->lock);
+    struct fd_entry *entry = entry_locked(table, fd);
+    int flags = entry ? (int)entry->flags : -1;
+    spin_unlock(&table->lock);
+    return flags;
+}
+
+int fd_set_flags(struct fd_table *table, int fd, uint32_t flags) {
+    spin_lock(&table->lock);
+    struct fd_entry *entry = entry_locked(table, fd);
+    if (entry) entry->flags = flags & FD_CLOEXEC;
+    spin_unlock(&table->lock);
+    return entry ? 0 : -1;
 }

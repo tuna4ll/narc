@@ -26,6 +26,7 @@ enum narc_syscall {
     NARC_SYS_GETPGID   = 0x000c,
     NARC_SYS_SETSID    = 0x000d,
     NARC_SYS_GETSID    = 0x000e,
+    NARC_SYS_UMASK     = 0x000f,
 
     NARC_SYS_OPEN      = 0x0100,
     NARC_SYS_CLOSE     = 0x0101,
@@ -41,6 +42,8 @@ enum narc_syscall {
     NARC_SYS_PIPE      = 0x010b,
     NARC_SYS_DUP       = 0x010c,
     NARC_SYS_DUP2      = 0x010d,
+    NARC_SYS_FCNTL     = 0x010e,
+    NARC_SYS_IOCTL     = 0x010f,
 
     NARC_SYS_MAP       = 0x0200,
     NARC_SYS_UNMAP     = 0x0201,
@@ -179,7 +182,21 @@ enum narc_open_flags {
     NARC_OPEN_TRUNCATE  = 1u << 4,
     NARC_OPEN_EXCLUSIVE = 1u << 5,
     NARC_OPEN_APPEND    = 1u << 6,
+    NARC_OPEN_NONBLOCK  = 1u << 7,
+    NARC_OPEN_CLOEXEC   = 1u << 8,
+    NARC_OPEN_NOCTTY    = 1u << 9,
 };
+
+enum narc_fcntl_command {
+    NARC_FCNTL_DUPFD         = 0,
+    NARC_FCNTL_DUPFD_CLOEXEC = 1,
+    NARC_FCNTL_GETFD         = 2,
+    NARC_FCNTL_SETFD         = 3,
+    NARC_FCNTL_GETFL         = 4,
+    NARC_FCNTL_SETFL         = 5,
+};
+
+#define NARC_FD_CLOEXEC 1u
 
 enum narc_seek_origin {
     NARC_SEEK_BEGIN   = 0,
