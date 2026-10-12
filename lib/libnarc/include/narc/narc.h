@@ -21,11 +21,12 @@ narc_result_t narc_setpgid(int pid, int pgid);
 narc_result_t narc_getpgid(int pid);
 narc_result_t narc_setsid(void);
 narc_result_t narc_getsid(int pid);
+narc_result_t narc_umask(uint32_t mask);
 narc_result_t narc_chdir(const char *path, size_t path_length);
 narc_result_t narc_fchdir(int fd);
 narc_result_t narc_getcwd(char *buffer, size_t size);
 
-narc_result_t narc_open(const char *path, size_t path_length, uint32_t flags);
+narc_result_t narc_open(const char *path, size_t path_length, uint32_t flags, uint32_t mode);
 narc_result_t narc_close(int fd);
 narc_result_t narc_read(int fd, void *buffer, size_t length);
 narc_result_t narc_write(int fd, const void *buffer, size_t length);
@@ -37,7 +38,9 @@ narc_result_t narc_unlink(const char *path, size_t path_length);
 narc_result_t narc_rmdir(const char *path, size_t path_length);
 narc_result_t narc_rename(const char *old_path, size_t old_length,
                           const char *new_path, size_t new_length);
-narc_result_t narc_pipe(int32_t fds[2]);
+narc_result_t narc_pipe(int32_t fds[2], uint32_t flags);
+narc_result_t narc_fcntl(int fd, uint32_t command, uint64_t argument);
+narc_result_t narc_ioctl(int fd, uint32_t request, uint64_t argument);
 narc_result_t narc_dup(int fd, int minimum);
 narc_result_t narc_dup2(int fd, int target);
 

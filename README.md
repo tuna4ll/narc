@@ -18,7 +18,7 @@ standard C and POSIX surface above it. The build installs both into
 #include <narc/narc.h>
 
 static const char path[] = "/etc/motd";
-narc_result_t result = narc_open(path, sizeof(path) - 1, NARC_OPEN_READ);
+narc_result_t result = narc_open(path, sizeof(path) - 1, NARC_OPEN_READ, 0);
 if (result.status != NARC_OK) {
     return 1;
 }
