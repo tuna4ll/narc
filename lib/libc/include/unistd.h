@@ -17,6 +17,7 @@ ssize_t read(int fd, void *buffer, size_t length);
 ssize_t write(int fd, const void *buffer, size_t length);
 int close(int fd);
 int pipe(int fds[2]);
+int pipe2(int fds[2], int flags);
 int dup(int fd);
 int dup2(int fd, int target);
 off_t lseek(int fd, off_t offset, int origin);

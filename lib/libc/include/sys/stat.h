@@ -27,3 +27,4 @@ struct stat {
 int fstat(int fd, struct stat *buffer);
 int stat(const char *path, struct stat *buffer);
 int mkdir(const char *path, mode_t mode);
+mode_t umask(mode_t mask);
