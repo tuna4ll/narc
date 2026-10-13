@@ -14,6 +14,7 @@ enum task_state {
 
 struct fd_table;
 struct vnode;
+struct tty;
 
 struct task {
     struct task *next;
@@ -32,6 +33,7 @@ struct task {
     struct fd_table *files;
     struct vnode *cwd;
     uint32_t umask;
+    struct tty *ctty;
     struct wait_queue child_exit;
     struct signal_state signals;
     int syscall_restart;
@@ -56,6 +58,9 @@ int task_setpgid(int pid, int pgid);
 int task_getpgid(int pid);
 int task_setsid(void);
 int task_getsid(int pid);
+int task_group_session(int pgid);
+void task_attach_tty(struct tty *tty, int sid);
+void task_detach_tty(struct tty *tty, int sid);
 int task_pid(void);
 uint64_t task_fs_base(void);
 void task_set_fs_base(uint64_t value);

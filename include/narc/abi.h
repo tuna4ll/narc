@@ -222,6 +222,44 @@ enum narc_file_type {
     NARC_FILE_SYMLINK   = 5,
 };
 
+#define NARC_NCCS 32
+
+enum narc_tty_request {
+    NARC_TCGETS     = 0x5401,
+    NARC_TCSETS     = 0x5402,
+    NARC_TCSETSW    = 0x5403,
+    NARC_TCSETSF    = 0x5404,
+    NARC_TCFLSH     = 0x540b,
+    NARC_TIOCSCTTY  = 0x540e,
+    NARC_TIOCGPGRP  = 0x540f,
+    NARC_TIOCSPGRP  = 0x5410,
+    NARC_TIOCOUTQ   = 0x5411,
+    NARC_TIOCGWINSZ = 0x5413,
+    NARC_TIOCSWINSZ = 0x5414,
+    NARC_FIONREAD   = 0x541b,
+    NARC_TIOCNOTTY  = 0x5422,
+    NARC_TIOCGSID   = 0x5429,
+};
+
+typedef struct narc_termios {
+    uint32_t iflag;
+    uint32_t oflag;
+    uint32_t cflag;
+    uint32_t lflag;
+    uint8_t line;
+    uint8_t cc[NARC_NCCS];
+    uint8_t reserved[3];
+    uint32_t ispeed;
+    uint32_t ospeed;
+} narc_termios_t;
+
+typedef struct narc_winsize {
+    uint16_t rows;
+    uint16_t cols;
+    uint16_t xpixels;
+    uint16_t ypixels;
+} narc_winsize_t;
+
 #define NARC_NAME_MAX 255
 
 typedef struct narc_file_info {

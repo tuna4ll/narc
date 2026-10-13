@@ -23,6 +23,7 @@ void signal_exec(struct task *task);
 int signal_send(struct task *task, int signal, const narc_siginfo_t *info);
 void signal_force(int signal, uint64_t address);
 int signal_pending(void);
+int signal_ignored_or_blocked(int signal);
 void signal_deliver(struct task_frame *frame);
 void user_return(struct task_frame *frame);
 

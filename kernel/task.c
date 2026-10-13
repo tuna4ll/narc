@@ -146,6 +146,7 @@ int task_fork(struct task_frame *frame) {
     child->sid = parent->sid;
     child->cwd = vnode_get(parent->cwd);
     child->umask = parent->umask;
+    child->ctty = parent->ctty;
     child->mmap_next = parent->mmap_next;
     child->fs_base = parent->fs_base;
     signal_fork(child, parent);
@@ -320,6 +321,7 @@ static void do_exit(int wait_status) {
         console_puts(wait_status & 0x7f ? "[kernel] init killed\n" : "[kernel] init exited\n");
         for (;;) arch_halt();
     }
+    if (self->pid == self->sid && self->ctty) tty_session_exit(self->ctty, self->sid);
     fd_table_release(self->files);
     self->files = 0;
     vnode_put(self->cwd);
@@ -453,9 +455,35 @@ int task_setsid(void) {
     int leader = 0;
     for (struct task *task = task_list; task; task = task->next)
         leader |= task->pgid == self->pid;
-    if (!leader) self->pgid = self->sid = self->pid;
+    if (!leader) {
+        self->pgid = self->sid = self->pid;
+        self->ctty = 0;
+    }
     spin_unlock_irqrestore(&task_lock, flags);
     return leader ? -NARC_NOT_PERMITTED : self->sid;
+}
+
+int task_group_session(int pgid) {
+    unsigned long flags = spin_lock_irqsave(&task_lock);
+    int session = -1;
+    for (struct task *task = task_list; task && session < 0; task = task->next)
+        if (task->pgid == pgid && !task->exited) session = task->sid;
+    spin_unlock_irqrestore(&task_lock, flags);
+    return session;
+}
+
+void task_attach_tty(struct tty *tty, int sid) {
+    unsigned long flags = spin_lock_irqsave(&task_lock);
+    for (struct task *task = task_list; task; task = task->next)
+        if (task->sid == sid && !task->ctty) task->ctty = tty;
+    spin_unlock_irqrestore(&task_lock, flags);
+}
+
+void task_detach_tty(struct tty *tty, int sid) {
+    unsigned long flags = spin_lock_irqsave(&task_lock);
+    for (struct task *task = task_list; task; task = task->next)
+        if (task->sid == sid && task->ctty == tty) task->ctty = 0;
+    spin_unlock_irqrestore(&task_lock, flags);
 }
 
 int task_pid(void) { return task_current()->pid; }

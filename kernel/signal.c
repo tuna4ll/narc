@@ -109,6 +109,11 @@ void signal_force(int signal, uint64_t address) {
     signal_send(self, signal, &info);
 }
 
+int signal_ignored_or_blocked(int signal) {
+    struct signal_state *state = &task_current()->signals;
+    return (state->blocked & SIG_BIT(signal)) || state->actions[signal].handler == NARC_SIG_IGN;
+}
+
 int signal_pending(void) {
     struct signal_state *state = &task_current()->signals;
     return (__atomic_load_n(&state->pending, __ATOMIC_ACQUIRE) & ~state->blocked) != 0;
