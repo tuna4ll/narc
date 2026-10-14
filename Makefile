@@ -79,7 +79,9 @@ LIBNARC_OBJ := $(patsubst lib/libnarc/%.c,$(BUILD)/lib/libnarc/%.o,$(LIBNARC_C))
                $(patsubst lib/libnarc/%.S,$(BUILD)/lib/libnarc/%.o,$(LIBNARC_ARCH_S))
 LIBNARC := $(BUILD)/lib/libnarc.a
 LIBC_C := $(shell find lib/libc/src -name '*.c' | sort)
-LIBC_OBJ := $(patsubst lib/libc/%.c,$(BUILD)/lib/libc/%.o,$(LIBC_C))
+LIBC_ARCH_S := $(shell find lib/libc/arch/$(ARCH) -name '*.S' 2>/dev/null | sort)
+LIBC_OBJ := $(patsubst lib/libc/%.c,$(BUILD)/lib/libc/%.o,$(LIBC_C)) \
+            $(patsubst lib/libc/%.S,$(BUILD)/lib/libc/%.o,$(LIBC_ARCH_S))
 LIBC_CRT0 := $(BUILD)/lib/libc/crt0.o
 LIBC_CRT1 := $(BUILD)/lib/libc/crt1.o
 LIBC := $(BUILD)/lib/libc.a
@@ -121,6 +123,10 @@ libnarc: $(LIBNARC)
 $(BUILD)/lib/libc/%.o: lib/libc/%.c
 	@mkdir -p $(dir $@)
 	$(USER_CC) $(LIBC_CFLAGS) $(USER_ARCH_FLAGS) $(DEPFLAGS) -c $< -o $@
+
+$(BUILD)/lib/libc/arch/%.o: lib/libc/arch/%.S
+	@mkdir -p $(dir $@)
+	$(USER_CC) -ffreestanding -fno-pic -fno-pie $(USER_ARCH_FLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(LIBC_CRT0): lib/libc/crt/arch/$(ARCH)/crt0.S
 	@mkdir -p $(dir $@)
