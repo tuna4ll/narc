@@ -159,7 +159,7 @@ $(BUILD)/userland/pablo/%.o: userland/pablo/%.c $(SYSROOT_STAMP) $(PABLO_HEADERS
 $(USER_APP): $(PABLO_OBJ) $(SYSROOT_STAMP)
 	@mkdir -p $(dir $@)
 	$(USER_CC) $(USER_CFLAGS) $(SYSROOT_LIB)/crt0.o $(SYSROOT_LIB)/crt1.o $(PABLO_OBJ) \
-		-L$(SYSROOT_LIB) -lc -lnarc $(USER_LDFLAGS) -o $@
+		-L$(SYSROOT_LIB) -lc -lnarc -lgcc $(USER_LDFLAGS) -o $@
 
 userland: $(USER_APP)
 
