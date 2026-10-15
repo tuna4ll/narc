@@ -28,6 +28,9 @@ static int status_errno(uint32_t status) {
     case NARC_INTERRUPTED:      return EINTR;
     case NARC_NO_PROCESS:       return ESRCH;
     case NARC_NOT_PERMITTED:    return EPERM;
+    case NARC_EXEC_FORMAT:      return ENOEXEC;
+    case NARC_ACCESS_DENIED:    return EACCES;
+    case NARC_TOO_BIG:          return E2BIG;
     default:                    return EIO;
     }
 }

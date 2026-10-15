@@ -86,6 +86,9 @@ enum narc_status {
     NARC_INTERRUPTED      = 23,
     NARC_NO_PROCESS       = 24,
     NARC_NOT_PERMITTED    = 25,
+    NARC_EXEC_FORMAT      = 26,
+    NARC_ACCESS_DENIED    = 27,
+    NARC_TOO_BIG          = 28,
 };
 
 enum narc_signal {

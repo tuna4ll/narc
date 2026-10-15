@@ -482,7 +482,7 @@ static uint32_t handle_exec(struct task_frame *frame, uint64_t path_address,
     if (!path) return NARC_BAD_ADDRESS;
     int status = user_exec(frame, path, argv_address, envp_address);
     kfree(path);
-    return status == 0 ? NARC_OK : NARC_NOT_FOUND;
+    return (uint32_t)-status;
 }
 
 static void return_result(struct task_frame *frame, struct kernel_result result) {

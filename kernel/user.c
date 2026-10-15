@@ -232,18 +232,14 @@ static int load_image(struct address_space *space, struct vnode *node, uint64_t 
     return 0;
 }
 
-static int load(struct address_space *space, struct vnode *base, const char *path,
-                const struct strings *argv, const struct strings *envp,
-                uint64_t *entry, uint64_t *stack) {
-    struct vnode *node;
-    if (vfs_lookup(base, path, &node) != 0) return -1;
+static int load(struct address_space *space, struct vnode *node, const struct strings *argv,
+                const struct strings *envp, uint64_t *entry, uint64_t *stack) {
     uint64_t size = node->size;
     struct elf64_ehdr eh;
     struct elf64_phdr *ph = 0;
     uint64_t phdr;
-    int status = -1;
-    if (node->type != VFS_REG || size < sizeof(eh) || read_at(node, 0, &eh, sizeof(eh)) != 0)
-        goto done;
+    int status = -NARC_EXEC_FORMAT;
+    if (size < sizeof(eh) || read_at(node, 0, &eh, sizeof(eh)) != 0) goto done;
     if (eh.ident[0] != 0x7f || eh.ident[1] != 'E' || eh.ident[2] != 'L' ||
         eh.ident[3] != 'F' || eh.ident[4] != 2 || eh.ident[5] != 1 ||
         eh.type != ET_EXEC || eh.machine != ARCH_ELF_MACHINE ||
@@ -252,50 +248,187 @@ static int load(struct address_space *space, struct vnode *base, const char *pat
     uint64_t ph_bytes = (uint64_t)eh.phnum * eh.phentsize;
     if (eh.phoff > size || ph_bytes > size - eh.phoff) goto done;
     ph = kmalloc((size_t)ph_bytes);
-    if (!ph || read_at(node, eh.phoff, ph, (size_t)ph_bytes) != 0 ||
-        load_image(space, node, size, &eh, ph, &phdr) != 0 ||
-        build_stack(space, &eh, phdr, argv, envp, stack) != 0)
+    status = -NARC_NO_MEMORY;
+    if (!ph) goto done;
+    status = -NARC_EXEC_FORMAT;
+    if (read_at(node, eh.phoff, ph, (size_t)ph_bytes) != 0 ||
+        load_image(space, node, size, &eh, ph, &phdr) != 0)
         goto done;
+    status = -NARC_TOO_BIG;
+    if (build_stack(space, &eh, phdr, argv, envp, stack) != 0) goto done;
     *entry = eh.entry;
     status = 0;
 done:
     kfree(ph);
+    return status;
+}
+
+struct vector {
+    char **items;
+    size_t count;
+};
+
+static void vector_free(struct vector *vector) {
+    if (!vector->items) return;
+    for (size_t i = 0; i < vector->count; i++) kfree(vector->items[i]);
+    kfree(vector->items);
+    vector->items = 0;
+    vector->count = 0;
+}
+
+static int vector_append(struct vector *vector, const char *text, size_t length) {
+    char **items = krealloc(vector->items, (vector->count + 2) * sizeof(char *));
+    if (!items) return -NARC_NO_MEMORY;
+    vector->items = items;
+    char *copy = kmalloc(length + 1);
+    if (!copy) return -NARC_NO_MEMORY;
+    memcpy(copy, text, length);
+    copy[length] = 0;
+    items[vector->count++] = copy;
+    items[vector->count] = 0;
+    return 0;
+}
+
+static int vector_ensure(struct vector *vector) {
+    if (vector->items) return 0;
+    vector->items = kzalloc(sizeof(char *));
+    return vector->items ? 0 : -NARC_NO_MEMORY;
+}
+
+static int copy_vector(struct address_space *space, uint64_t list, struct vector *vector) {
+    uint64_t total = 0;
+    for (size_t index = 0; list; index++) {
+        uint64_t slot = list + index * sizeof(uint64_t), address;
+        if (!vmm_user_range_ok(space, slot, sizeof(uint64_t), 0) ||
+            uaccess_read(space, &address, slot, sizeof(uint64_t)) != 0)
+            return -NARC_BAD_ADDRESS;
+        if (!address) break;
+        long length = uaccess_strlen(space, address);
+        if (length < 0) return -NARC_BAD_ADDRESS;
+        total += (uint64_t)length + 1;
+        if (total > USER_STACK_RESERVE / 2) return -NARC_TOO_BIG;
+        char **items = krealloc(vector->items, (vector->count + 2) * sizeof(char *));
+        if (!items) return -NARC_NO_MEMORY;
+        vector->items = items;
+        char *copy = kmalloc((size_t)length + 1);
+        if (!copy) return -NARC_NO_MEMORY;
+        items[vector->count++] = copy;
+        items[vector->count] = 0;
+        if (uaccess_read(space, copy, address, (size_t)length + 1) != 0) return -NARC_BAD_ADDRESS;
+    }
+    return 0;
+}
+
+static int interpreter(struct vnode *node, const char *path, struct vector *argv) {
+    char line[128];
+    uint64_t size = node->size < sizeof(line) - 1 ? node->size : sizeof(line) - 1;
+    if (size < 3 || read_at(node, 0, line, (size_t)size) != 0 || line[0] != '#' || line[1] != '!')
+        return 0;
+    line[size] = 0;
+    char *cursor = line + 2;
+    while (*cursor == ' ' || *cursor == '\t') cursor++;
+    char *program = cursor;
+    while (*cursor && *cursor != ' ' && *cursor != '\t' && *cursor != '\n') cursor++;
+    size_t program_length = (size_t)(cursor - program);
+    while (*cursor == ' ' || *cursor == '\t') cursor++;
+    char *argument = cursor;
+    while (*cursor && *cursor != '\n') cursor++;
+    while (cursor > argument && (cursor[-1] == ' ' || cursor[-1] == '\t')) cursor--;
+    size_t argument_length = (size_t)(cursor - argument);
+    if (!program_length) return -NARC_EXEC_FORMAT;
+    struct vector next = { 0, 0 };
+    int status = vector_append(&next, program, program_length);
+    if (!status && argument_length) status = vector_append(&next, argument, argument_length);
+    if (!status) status = vector_append(&next, path, strlen(path));
+    for (size_t i = 1; !status && i < argv->count; i++)
+        status = vector_append(&next, argv->items[i], strlen(argv->items[i]));
+    if (status) {
+        vector_free(&next);
+        return status;
+    }
+    vector_free(argv);
+    *argv = next;
+    return 1;
+}
+
+static int open_executable(struct vnode *base, const char *path, struct vnode **node) {
+    int status = vfs_lookup(base, path, node);
+    if (status) return status;
+    if ((*node)->type != VFS_REG || !((*node)->mode & 0111)) {
+        vnode_put(*node);
+        return -NARC_ACCESS_DENIED;
+    }
+    return 0;
+}
+
+static int exec_vector(struct address_space *space, struct vnode *base, const char *path,
+                       struct vector *argv, struct vector *envp, uint64_t *entry,
+                       uint64_t *stack) {
+    struct vnode *node = 0;
+    char *current = 0;
+    int status = 0;
+    for (int depth = 0;; depth++) {
+        status = open_executable(base, current ? current : path, &node);
+        if (status) break;
+        status = depth < 4 ? interpreter(node, current ? current : path, argv) : 0;
+        if (status < 0) break;
+        if (!status) {
+            struct strings arguments = { 0, (uint64_t)(uintptr_t)argv->items, 0, 0 };
+            struct strings environment = { 0, (uint64_t)(uintptr_t)envp->items, 0, 0 };
+            status = measure(&arguments) || measure(&environment) ? -NARC_TOO_BIG :
+                     load(space, node, &arguments, &environment, entry, stack);
+            break;
+        }
+        vnode_put(node);
+        node = 0;
+        kfree(current);
+        current = kmalloc(strlen(argv->items[0]) + 1);
+        if (!current) {
+            status = -NARC_NO_MEMORY;
+            break;
+        }
+        memcpy(current, argv->items[0], strlen(argv->items[0]) + 1);
+    }
     vnode_put(node);
+    kfree(current);
     return status;
 }
 
 int user_exec(struct task_frame *frame, const char *path, uint64_t argv, uint64_t envp) {
     struct address_space *current = vmm_space_current();
-    const char *fallback[] = { path, 0 };
-    struct strings arguments = { current, argv, 0, 0 };
-    struct strings environment = { current, envp, 0, 0 };
-    if (measure(&arguments) != 0 || measure(&environment) != 0) return -1;
-    if (!arguments.count) {
-        arguments = (struct strings) { 0, (uint64_t)(uintptr_t)fallback, 0, 0 };
-        if (measure(&arguments) != 0) return -1;
-    }
-    struct address_space space;
+    struct vector arguments = { 0, 0 }, environment = { 0, 0 };
+    int status = copy_vector(current, argv, &arguments);
+    if (!status) status = copy_vector(current, envp, &environment);
+    if (!status && !arguments.count) status = vector_append(&arguments, path, strlen(path));
+    if (!status) status = vector_ensure(&environment);
+    struct address_space space = { 0 };
     uint64_t entry, stack;
-    if (vmm_space_create(&space) != 0) return -1;
-    if (load(&space, task_cwd(), path, &arguments, &environment, &entry, &stack) != 0) {
-        vmm_space_destroy(&space);
-        return -1;
+    if (!status && vmm_space_create(&space) != 0) status = -NARC_NO_MEMORY;
+    if (!status) status = exec_vector(&space, task_cwd(), path, &arguments, &environment,
+                                      &entry, &stack);
+    vector_free(&arguments);
+    vector_free(&environment);
+    if (status) {
+        if (space.root) vmm_space_destroy(&space);
+        return status;
     }
     task_exec(frame, &space, entry, stack);
     return 0;
 }
 
 void user_start(void) {
-    static const char *const argv[] = { "/sbin/init", 0 };
-    struct strings arguments = { 0, (uint64_t)(uintptr_t)argv, 0, 0 };
-    struct strings environment = { 0, 0, 0, 0 };
+    struct vector arguments = { 0, 0 }, environment = { 0, 0 };
     struct task *task = task_create();
     uint64_t entry, stack;
-    if (!task || measure(&arguments) != 0 ||
-        load(&task->space, vfs_root(), argv[0], &arguments, &environment, &entry, &stack) != 0) {
+    if (!task || vector_append(&arguments, "/sbin/init", 10) != 0 ||
+        vector_ensure(&environment) != 0 ||
+        exec_vector(&task->space, vfs_root(), "/sbin/init", &arguments, &environment,
+                    &entry, &stack) != 0) {
         console_puts("[panic] cannot start init\n");
         arch_halt();
     }
+    vector_free(&arguments);
+    vector_free(&environment);
     task_set_entry(task, entry, stack);
     console_puts("[user] entering ring 3\n");
     sched_start(task);
