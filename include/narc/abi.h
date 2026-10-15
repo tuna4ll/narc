@@ -27,6 +27,8 @@ enum narc_syscall {
     NARC_SYS_SETSID    = 0x000d,
     NARC_SYS_GETSID    = 0x000e,
     NARC_SYS_UMASK     = 0x000f,
+    NARC_SYS_UNAME     = 0x0010,
+    NARC_SYS_SETHOSTNAME = 0x0011,
 
     NARC_SYS_OPEN      = 0x0100,
     NARC_SYS_CLOSE     = 0x0101,
@@ -262,6 +264,16 @@ typedef struct narc_winsize {
     uint16_t xpixels;
     uint16_t ypixels;
 } narc_winsize_t;
+
+#define NARC_UTS_LENGTH 65
+
+typedef struct narc_utsname {
+    char sysname[NARC_UTS_LENGTH];
+    char nodename[NARC_UTS_LENGTH];
+    char release[NARC_UTS_LENGTH];
+    char version[NARC_UTS_LENGTH];
+    char machine[NARC_UTS_LENGTH];
+} narc_utsname_t;
 
 #define NARC_NAME_MAX 255
 

@@ -55,6 +55,9 @@ narc_result_t narc_sigpending(void);
 narc_result_t narc_sigsuspend(uint64_t mask);
 void narc_signal_return(void);
 
+narc_result_t narc_uname(narc_utsname_t *info);
+narc_result_t narc_sethostname(const char *name, size_t length);
+
 narc_result_t narc_clock_get(uint32_t clock);
 narc_result_t narc_sleep(uint64_t nanoseconds);
 

@@ -6,6 +6,7 @@
 #include <kernel/signal.h>
 #include <kernel/string.h>
 #include <kernel/syscall.h>
+#include <kernel/system.h>
 #include <kernel/task.h>
 #include <kernel/time.h>
 #include <kernel/uaccess.h>
@@ -546,6 +547,12 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return;
     case NARC_SYS_OPEN:
         return_result(frame, handle_open(a1, a2, a3, arch_syscall_arg(frame, 3)));
+        return;
+    case NARC_SYS_UNAME:
+        return_result(frame, result_status(system_uname(a1)));
+        return;
+    case NARC_SYS_SETHOSTNAME:
+        return_result(frame, result_status(system_sethostname(a1, a2)));
         return;
     case NARC_SYS_UMASK:
         return_result(frame, result_ok(task_umask((uint32_t)a1, 1)));
