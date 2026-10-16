@@ -30,5 +30,6 @@ restart_limit=5
 restart_delay=64
 ```
 
-The delay is measured in supervisor ticks. Unknown or malformed settings stop
+The delay is measured in ticks of 10 ms. Pablo sleeps while no service is
+waiting to restart and wakes when a child changes state. Unknown or malformed settings stop
 boot instead of being ignored.

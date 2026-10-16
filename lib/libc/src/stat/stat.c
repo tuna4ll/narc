@@ -9,3 +9,7 @@ int stat(const char *path, struct stat *buffer) {
     close(fd);
     return result;
 }
+
+int lstat(const char *path, struct stat *buffer) {
+    return stat(path, buffer);
+}

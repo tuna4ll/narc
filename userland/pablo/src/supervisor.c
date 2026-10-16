@@ -1,9 +1,19 @@
 #include <errno.h>
 #include <pablo/log.h>
 #include <pablo/supervisor.h>
-#include <sched.h>
+#include <signal.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+#define TICK_NANOSECONDS 10000000L
+
+static volatile sig_atomic_t child_changed;
+
+static void on_child(int signal) {
+    (void)signal;
+    child_changed = 1;
+}
 
 static char *const child_environment[] = {
     "PATH=/bin:/sbin",
@@ -115,6 +125,33 @@ void pablo_supervisor_init(struct pablo_supervisor *supervisor,
     supervisor->config = config;
     supervisor->tick = 0;
     supervisor->quiescent_reported = 0;
+    struct sigaction action = { 0 };
+    action.sa_handler = on_child;
+    action.sa_flags = SA_NOCLDSTOP | SA_RESTART;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGCHLD, &action, 0);
+}
+
+static int backoff_pending(struct pablo_config *config) {
+    for (size_t i = 0; i < config->service_count; i++)
+        if (config->services[i].state == PABLO_BACKOFF) return 1;
+    return 0;
+}
+
+static void idle(struct pablo_supervisor *supervisor) {
+    if (backoff_pending(supervisor->config)) {
+        struct timespec tick = { 0, TICK_NANOSECONDS };
+        nanosleep(&tick, 0);
+        supervisor->tick++;
+        return;
+    }
+    sigset_t block, previous;
+    sigemptyset(&block);
+    sigaddset(&block, SIGCHLD);
+    sigprocmask(SIG_BLOCK, &block, &previous);
+    if (!child_changed) sigsuspend(&previous);
+    child_changed = 0;
+    sigprocmask(SIG_SETMASK, &previous, 0);
 }
 
 void pablo_supervisor_run(struct pablo_supervisor *supervisor) {
@@ -125,7 +162,6 @@ void pablo_supervisor_run(struct pablo_supervisor *supervisor) {
             pablo_log(PABLO_LOG_INFO, "service graph settled");
             supervisor->quiescent_reported = 1;
         }
-        supervisor->tick++;
-        sched_yield();
+        idle(supervisor);
     }
 }
