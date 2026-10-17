@@ -17,7 +17,13 @@ arg=--foreground
 
 `exec` is required and must be an absolute path. `policy` accepts `once` or
 `respawn`; the default is `once`. `after` names one dependency. Each `arg`
-appends one argument in declaration order.
+appends one argument in declaration order and each `env` adds one
+`NAME=value` pair to the service environment.
+
+`terminal=yes` starts the service as a session leader that owns the console as
+its controlling terminal, which interactive shells need for job control.
+`restart_limit` overrides the global limit for one service; `0` restarts it
+without limit.
 
 Pablo rejects duplicate names, missing dependencies and dependency cycles.
 Services are loaded in filename order. Failed dependencies propagate failure,

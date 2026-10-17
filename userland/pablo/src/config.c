@@ -82,6 +82,25 @@ static int append_argument(struct pablo_service *service, const char *value) {
     return 0;
 }
 
+static int append_environment(struct pablo_service *service, const char *value) {
+    if (!strchr(value, '=') || value[0] == '=') return -1;
+    char **environment = realloc(service->environment,
+                                 (service->environment_count + 2) * sizeof(*environment));
+    if (!environment) return -1;
+    service->environment = environment;
+    environment[service->environment_count] = pablo_duplicate(value, strlen(value));
+    if (!environment[service->environment_count]) return -1;
+    environment[++service->environment_count] = 0;
+    return 0;
+}
+
+static int parse_switch(const char *value, int *result) {
+    if (!strcmp(value, "yes")) *result = 1;
+    else if (!strcmp(value, "no")) *result = 0;
+    else return -1;
+    return 0;
+}
+
 static int parse_service_line(struct pablo_service *service, char *line) {
     char *key, *value;
     if (split_setting(line, &key, &value) != 0) return -1;
@@ -94,6 +113,15 @@ static int parse_service_line(struct pablo_service *service, char *line) {
         return 0;
     }
     if (!strcmp(key, "arg")) return append_argument(service, value);
+    if (!strcmp(key, "env")) return append_environment(service, value);
+    if (!strcmp(key, "terminal")) return parse_switch(value, &service->terminal);
+    if (!strcmp(key, "restart_limit")) {
+        char *end;
+        long limit = strtol(value, &end, 10);
+        if (*end || limit < 0 || limit > 1000000) return -1;
+        service->restart_limit = (int)limit;
+        return 0;
+    }
     return -1;
 }
 
@@ -111,6 +139,7 @@ static char *join_path(const char *directory, const char *filename) {
 static int load_service(struct pablo_service *service, const char *directory,
                         const char *filename) {
     memset(service, 0, sizeof(*service));
+    service->restart_limit = -1;
     service->name = service_name(filename);
     char *path = join_path(directory, filename);
     char *buffer = 0;

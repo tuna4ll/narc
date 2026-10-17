@@ -22,6 +22,10 @@ struct pablo_service {
     char *after;
     char **argv;
     size_t argument_count;
+    char **environment;
+    size_t environment_count;
+    int terminal;
+    int restart_limit;
     enum pablo_policy policy;
     enum pablo_service_state state;
     pid_t pid;

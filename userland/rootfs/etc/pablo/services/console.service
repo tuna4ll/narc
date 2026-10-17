@@ -1,0 +1,10 @@
+exec=/bin/caposh
+arg=-l
+policy=respawn
+restart_limit=0
+terminal=yes
+env=HOME=/root
+env=USER=root
+env=LOGNAME=root
+env=SHELL=/bin/caposh
+env=TERM=vt100

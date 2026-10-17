@@ -2,7 +2,10 @@
 #include <pablo/log.h>
 #include <pablo/supervisor.h>
 #include <signal.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -15,11 +18,25 @@ static void on_child(int signal) {
     child_changed = 1;
 }
 
-static char *const child_environment[] = {
-    "PATH=/bin:/sbin",
+static char *const base_environment[] = {
+    "PATH=/bin:/sbin:/usr/bin",
     "HOME=/",
     0,
 };
+
+static void set_default_environment(void) {
+    for (char *const *entry = base_environment; *entry; entry++) putenv(*entry);
+}
+
+static void attach_terminal(struct pablo_service *service) {
+    if (!service->terminal) return;
+    setsid();
+    if (ioctl(0, TIOCSCTTY, 0) != 0) {
+        pablo_log_service(PABLO_LOG_WARN, service->name, "cannot acquire terminal");
+        return;
+    }
+    tcsetpgrp(0, getpid());
+}
 
 static int dependency_ready(struct pablo_supervisor *supervisor,
                             struct pablo_service *service) {
@@ -42,7 +59,14 @@ static void spawn_service(struct pablo_service *service) {
         return;
     }
     if (!pid) {
-        execve(service->path, service->argv, child_environment);
+        sigset_t empty;
+        sigemptyset(&empty);
+        sigprocmask(SIG_SETMASK, &empty, 0);
+        clearenv();
+        set_default_environment();
+        for (size_t i = 0; i < service->environment_count; i++) putenv(service->environment[i]);
+        attach_terminal(service);
+        execve(service->path, service->argv, environ);
         _exit(127);
     }
     service->pid = pid;
@@ -72,7 +96,9 @@ static void record_exit(struct pablo_supervisor *supervisor, pid_t pid, int stat
                          service->name, "exited", service->exit_status);
         return;
     }
-    if (service->restart_count >= supervisor->config->restart_limit) {
+    unsigned int limit = service->restart_limit >= 0 ? (unsigned int)service->restart_limit :
+                         supervisor->config->restart_limit;
+    if (limit && service->restart_count >= limit) {
         service->state = PABLO_FAILED;
         pablo_log_service(PABLO_LOG_ERROR, service->name, "restart limit reached");
         return;
