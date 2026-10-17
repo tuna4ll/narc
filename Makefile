@@ -11,6 +11,9 @@ USER_APP := $(BUILD)/userland/init
 PABLO_C := $(shell find userland/pablo/src -name '*.c' 2>/dev/null | sort)
 PABLO_OBJ := $(patsubst userland/pablo/%.c,$(BUILD)/userland/pablo/%.o,$(PABLO_C))
 PABLO_HEADERS := $(shell find userland/pablo/include -type f 2>/dev/null | sort)
+CAPOSH := $(BUILD)/userland/bin/caposh
+CAPOSH_C := $(shell find userland/caposh/src -name '*.c' 2>/dev/null | sort)
+CAPOSH_OBJ := $(patsubst userland/caposh/%.c,$(BUILD)/userland/caposh/%.o,$(CAPOSH_C))
 INITRAMFS := $(BUILD)/initramfs.tar
 INITRAMFS_ROOT := $(BUILD)/initramfs_root
 USER_BASE := 0x400000
@@ -167,15 +170,26 @@ $(USER_APP): $(PABLO_OBJ) $(SYSROOT_STAMP)
 	$(USER_CC) $(USER_CFLAGS) $(SYSROOT_LIB)/crt0.o $(SYSROOT_LIB)/crt1.o $(PABLO_OBJ) \
 		-L$(SYSROOT_LIB) -lc -lnarc -lgcc $(USER_LDFLAGS) -o $@
 
-userland: $(USER_APP)
+$(BUILD)/userland/caposh/%.o: userland/caposh/%.c $(SYSROOT_STAMP)
+	@mkdir -p $(dir $@)
+	$(USER_CC) $(USER_CFLAGS) $(DEPFLAGS) -I userland/caposh/include -c $< -o $@
 
-$(INITRAMFS): $(USER_APP) $(ROOTFS_FILES)
+$(CAPOSH): $(CAPOSH_OBJ) $(SYSROOT_STAMP)
+	@mkdir -p $(dir $@)
+	$(USER_CC) $(USER_CFLAGS) $(SYSROOT_LIB)/crt0.o $(SYSROOT_LIB)/crt1.o $(CAPOSH_OBJ) \
+		-L$(SYSROOT_LIB) -lc -lnarc -lgcc $(USER_LDFLAGS) -o $@
+
+userland: $(USER_APP) $(CAPOSH)
+
+$(INITRAMFS): $(USER_APP) $(CAPOSH) $(ROOTFS_FILES)
 	rm -rf $(INITRAMFS_ROOT)
 	mkdir -p $(INITRAMFS_ROOT)/sbin $(INITRAMFS_ROOT)/bin
 	cp -R userland/rootfs/. $(INITRAMFS_ROOT)/
 	cp $(USER_APP) $(INITRAMFS_ROOT)/sbin/init
 	cp $(USER_APP) $(INITRAMFS_ROOT)/sbin/pablo
 	cp $(USER_APP) $(INITRAMFS_ROOT)/bin/init
+	cp $(CAPOSH) $(INITRAMFS_ROOT)/bin/caposh
+	cp $(CAPOSH) $(INITRAMFS_ROOT)/bin/sh
 	tar --format=ustar --owner=0 --group=0 --numeric-owner -cf $@ -C $(INITRAMFS_ROOT) .
 
 $(BUILD)/kernel/%.o: kernel/%.c
