@@ -117,7 +117,7 @@ static struct kernel_result write_file(struct open_file *open, uint64_t buffer,
     uint64_t done = 0;
     while (done < length) {
         uint64_t ptr = buffer + done;
-        uint64_t phys = vmm_user_phys(space, ptr);
+        uint64_t phys = vmm_user_page(space, ptr, 0);
         if (!phys) return result_error(NARC_BAD_ADDRESS);
         size_t chunk = PAGE_SIZE - (size_t)(ptr & (PAGE_SIZE - 1));
         if ((uint64_t)chunk > length - done) chunk = (size_t)(length - done);

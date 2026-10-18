@@ -7,6 +7,7 @@
 #define PTE_U (1ULL << 4)
 #define PTE_A (1ULL << 6)
 #define PTE_D (1ULL << 7)
+#define PTE_COW (1ULL << 8)
 #define SATP_MODE_MASK (0xfULL << 60)
 #define SATP_PPN_MASK  ((1ULL << 44) - 1)
 
@@ -84,13 +85,20 @@ static int clone_table(uint64_t dst_phys, uint64_t src_phys, unsigned level) {
     for (size_t i = 0; i < 512; i++) {
         uint64_t pte = src[i];
         if (!(pte & PTE_V)) continue;
+        if (pte & (PTE_R | PTE_W | PTE_X)) {
+            if ((pte & PTE_U) && (pte & PTE_W)) {
+                pte = (pte & ~PTE_W) | PTE_COW;
+                src[i] = pte;
+            }
+            pmm_page_ref(pte_phys(pte));
+            dst[i] = pte;
+            continue;
+        }
+        if (!level) return -1;
         uint64_t page = pmm_alloc_page();
         if (!page) return -1;
         dst[i] = make_pte(page, pte & 0x3ff);
-        if (pte & (PTE_R | PTE_W | PTE_X))
-            __builtin_memcpy(phys_to_virt(page), phys_to_virt(pte_phys(pte)), PAGE_SIZE);
-        else if (!level || clone_table(page, pte_phys(pte), level - 1) != 0)
-            return -1;
+        if (clone_table(page, pte_phys(pte), level - 1) != 0) return -1;
     }
     return 0;
 }
@@ -99,17 +107,20 @@ int vmm_space_clone(struct address_space *dst, struct address_space *src) {
     if (vmm_space_create(dst) != 0) return -1;
     uint64_t *to = phys_to_virt(dst->root);
     uint64_t *from = phys_to_virt(src->root);
-    for (size_t i = 0; i < 256; i++) {
+    int status = 0;
+    for (size_t i = 0; i < 256 && !status; i++) {
         if (!(from[i] & PTE_V)) continue;
         uint64_t page = pmm_alloc_page();
-        if (!page) goto fail;
+        if (!page) {
+            status = -1;
+            break;
+        }
         to[i] = make_pte(page, from[i] & 0x3ff);
-        if (clone_table(page, pte_phys(from[i]), levels() - 2) != 0) goto fail;
+        status = clone_table(page, pte_phys(from[i]), levels() - 2);
     }
-    return 0;
-fail:
-    vmm_space_destroy(dst);
-    return -1;
+    flush_tlb();
+    if (status) vmm_space_destroy(dst);
+    return status;
 }
 
 void vmm_space_boot(struct address_space *space) {
@@ -194,25 +205,26 @@ int vmm_unmap_user(struct address_space *space, uint64_t virt) {
     return 0;
 }
 
-uint64_t vmm_user_phys(struct address_space *space, uint64_t virt) {
+int vmm_query(struct address_space *space, uint64_t virt, uint64_t *phys, unsigned *flags) {
     uint64_t *pte = get_pte(space->root, virt, 0);
-    if (!pte || !(*pte & PTE_V) || !(*pte & PTE_U)) return 0;
-    return pte_phys(*pte) | (virt & (PAGE_SIZE - 1));
+    if (!pte || !(*pte & PTE_V)) return -1;
+    *phys = pte_phys(*pte);
+    *flags = PAGE_PRESENT | ((*pte & PTE_U) ? PAGE_USER : 0) |
+             ((*pte & PTE_W) ? PAGE_WRITE : 0) | ((*pte & PTE_COW) ? PAGE_COW : 0);
+    return 0;
+}
+
+int vmm_update(struct address_space *space, uint64_t virt, uint64_t phys, unsigned flags) {
+    uint64_t *pte = get_pte(space->root, virt, 0);
+    if (!pte || !(*pte & PTE_V)) return -1;
+    uint64_t bits = (*pte & 0x3ff & ~(PTE_W | PTE_COW)) | PTE_A | PTE_D;
+    if (flags & PAGE_WRITE) bits |= PTE_W;
+    if (flags & PAGE_COW) bits |= PTE_COW;
+    *pte = make_pte(phys, bits);
+    flush_tlb();
+    return 0;
 }
 
 uint64_t vmm_user_end(void) {
     return levels() == 4 ? 0x0000800000000000ULL : 0x0000004000000000ULL;
-}
-
-int vmm_user_range_ok(struct address_space *space, uint64_t virt, uint64_t len, int write) {
-    if (!len) return 1;
-    if (virt >= vmm_user_end() || len > vmm_user_end() - virt) return 0;
-    uint64_t last = (virt + len - 1) & ~(PAGE_SIZE - 1);
-    for (uint64_t page = virt & ~(PAGE_SIZE - 1);; page += PAGE_SIZE) {
-        uint64_t *pte = get_pte(space->root, page, 0);
-        if (!pte || !(*pte & PTE_V) || !(*pte & PTE_U)) return 0;
-        if (write && !(*pte & PTE_W)) return 0;
-        if (page == last) break;
-    }
-    return 1;
 }

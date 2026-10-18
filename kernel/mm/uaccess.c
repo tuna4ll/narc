@@ -2,8 +2,8 @@
 #include <kernel/uaccess.h>
 
 static void *user_chunk(struct address_space *space, uint64_t address, size_t len,
-                        size_t *chunk) {
-    uint64_t phys = vmm_user_phys(space, address);
+                        size_t *chunk, int write) {
+    uint64_t phys = vmm_user_page(space, address, write);
     if (!phys) return 0;
     *chunk = PAGE_SIZE - (size_t)(address & (PAGE_SIZE - 1));
     if (*chunk > len) *chunk = len;
@@ -14,7 +14,7 @@ int uaccess_read(struct address_space *space, void *dst, uint64_t src, size_t le
     uint8_t *out = dst;
     while (len) {
         size_t chunk;
-        const void *in = user_chunk(space, src, len, &chunk);
+        const void *in = user_chunk(space, src, len, &chunk, 0);
         if (!in) return -1;
         memcpy(out, in, chunk);
         src += chunk;
@@ -28,7 +28,7 @@ int uaccess_write(struct address_space *space, uint64_t dst, const void *src, si
     const uint8_t *in = src;
     while (len) {
         size_t chunk;
-        void *out = user_chunk(space, dst, len, &chunk);
+        void *out = user_chunk(space, dst, len, &chunk, 1);
         if (!out) return -1;
         memcpy(out, in, chunk);
         dst += chunk;
@@ -41,7 +41,7 @@ int uaccess_write(struct address_space *space, uint64_t dst, const void *src, si
 int uaccess_zero(struct address_space *space, uint64_t dst, size_t len) {
     while (len) {
         size_t chunk;
-        void *out = user_chunk(space, dst, len, &chunk);
+        void *out = user_chunk(space, dst, len, &chunk, 1);
         if (!out) return -1;
         memset(out, 0, chunk);
         dst += chunk;
@@ -53,7 +53,7 @@ int uaccess_zero(struct address_space *space, uint64_t dst, size_t len) {
 long uaccess_strlen(struct address_space *space, uint64_t src) {
     for (long length = 0;;) {
         size_t chunk;
-        const char *in = user_chunk(space, src, PAGE_SIZE, &chunk);
+        const char *in = user_chunk(space, src, PAGE_SIZE, &chunk, 0);
         if (!in) return -1;
         for (size_t i = 0; i < chunk; i++)
             if (!in[i]) return length + (long)i;

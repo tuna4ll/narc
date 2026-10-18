@@ -202,6 +202,14 @@ void aarch64_sync(struct task_frame *frame) {
         return;
     }
     if (arch_frame_from_user(frame)) {
+        unsigned ec = (unsigned)(esr >> 26), status = (unsigned)(esr & 0x3f);
+        int page_fault = (ec == 0x20 || ec == 0x24) &&
+                         ((status & 0x3c) == 0x04 || (status & 0x3c) == 0x0c);
+        int write = ec == 0x24 && ((esr >> 6) & 1);
+        if (page_fault && vmm_resolve(vmm_space_current(), far, write) == 0) {
+            user_return(frame);
+            return;
+        }
         signal_force(fault_signal(esr), far);
         user_return(frame);
         return;

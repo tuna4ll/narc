@@ -1,6 +1,7 @@
 #include <kernel/arch.h>
 #include <kernel/console.h>
 #include <kernel/idt.h>
+#include <kernel/mm.h>
 #include <kernel/signal.h>
 #include <kernel/serial.h>
 #include <kernel/task.h>
@@ -54,10 +55,14 @@ static void kernel_fault(struct task_frame *frame) {
 void x86_interrupt(struct task_frame *frame) {
     if (frame->vector < 32) {
         if (!arch_frame_from_user(frame)) kernel_fault(frame);
+        if (frame->vector == 14 &&
+            vmm_resolve(vmm_space_current(), read_cr2(), (frame->error & 2) != 0) == 0)
+            goto done;
         signal_force(fault_signal(frame->vector), frame->vector == 14 ? read_cr2() : frame->rip);
     } else if (handlers[frame->vector]) {
         handlers[frame->vector](frame);
     }
+done:
     if (arch_frame_from_user(frame)) user_return(frame);
 }
 

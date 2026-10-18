@@ -7,6 +7,13 @@
 #define VMM_WRITE (1ULL << 1)
 #define VMM_DEVICE (1ULL << 2)
 #define USER_MMAP_BASE 0x0000000100000000ULL
+#define USER_STACK_TOP 0x0000000080000000ULL
+#define USER_STACK_LIMIT (8ULL * 1024ULL * 1024ULL)
+
+#define PAGE_PRESENT 0x1u
+#define PAGE_USER    0x2u
+#define PAGE_WRITE   0x4u
+#define PAGE_COW     0x8u
 
 struct address_space {
     uint64_t root;
@@ -15,6 +22,8 @@ struct address_space {
 void mm_init(struct limine_memmap_response *map, uint64_t hhdm_offset);
 uint64_t pmm_alloc_page(void);
 void pmm_free_page(uint64_t phys);
+void pmm_page_ref(uint64_t phys);
+unsigned pmm_page_refs(uint64_t phys);
 void *phys_to_virt(uint64_t phys);
 int vmm_space_create(struct address_space *space);
 int vmm_space_clone(struct address_space *dst, struct address_space *src);
@@ -28,6 +37,10 @@ int vmm_unmap_user(struct address_space *space, uint64_t virt);
 uint64_t vmm_user_end(void);
 int vmm_user_range_ok(struct address_space *space, uint64_t virt, uint64_t len, int write);
 uint64_t vmm_user_phys(struct address_space *space, uint64_t virt);
+int vmm_query(struct address_space *space, uint64_t virt, uint64_t *phys, unsigned *flags);
+int vmm_update(struct address_space *space, uint64_t virt, uint64_t phys, unsigned flags);
+int vmm_resolve(struct address_space *space, uint64_t virt, int write);
+uint64_t vmm_user_page(struct address_space *space, uint64_t virt, int write);
 int vmm_map_kernel(uint64_t virt, uint64_t phys, uint64_t flags);
 uint64_t vmm_unmap_kernel(uint64_t virt);
 void vmm_kernel_window(uint64_t *base, uint64_t *size);

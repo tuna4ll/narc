@@ -8,6 +8,7 @@
 #define DESC_SH    (3ULL << 8)
 #define DESC_PXN   (1ULL << 53)
 #define DESC_UXN   (1ULL << 54)
+#define DESC_COW   (1ULL << 55)
 #define DESC_DEVICE (7ULL << 2)
 #define ADDR_MASK  0x0000fffffffff000ULL
 
@@ -88,22 +89,29 @@ static int clone_table(uint64_t dst_phys, uint64_t src_phys, unsigned level) {
     for (size_t i = 0; i < 512; i++) {
         uint64_t entry = src[i];
         if (!(entry & DESC_VALID)) continue;
+        if (level == 1 || !(entry & DESC_TABLE)) {
+            if ((entry & DESC_USER) && !(entry & DESC_RO)) {
+                entry |= DESC_RO | DESC_COW;
+                src[i] = entry;
+            }
+            pmm_page_ref(entry & ADDR_MASK);
+            dst[i] = entry;
+            continue;
+        }
         uint64_t page = pmm_alloc_page();
         if (!page) return -1;
         dst[i] = page | (entry & ~ADDR_MASK);
-        if (level == 1 || !(entry & DESC_TABLE))
-            __builtin_memcpy(phys_to_virt(page), phys_to_virt(entry & ADDR_MASK), PAGE_SIZE);
-        else if (clone_table(page, entry & ADDR_MASK, level - 1) != 0)
-            return -1;
+        if (clone_table(page, entry & ADDR_MASK, level - 1) != 0) return -1;
     }
     return 0;
 }
 
 int vmm_space_clone(struct address_space *dst, struct address_space *src) {
     if (vmm_space_create(dst) != 0) return -1;
-    if (clone_table(dst->root, src->root, 4) == 0) return 0;
-    vmm_space_destroy(dst);
-    return -1;
+    int status = clone_table(dst->root, src->root, 4);
+    flush_tlb();
+    if (status) vmm_space_destroy(dst);
+    return status;
 }
 
 void vmm_space_boot(struct address_space *space) {
@@ -179,25 +187,26 @@ int vmm_unmap_user(struct address_space *space, uint64_t virt) {
     return 0;
 }
 
-uint64_t vmm_user_phys(struct address_space *space, uint64_t virt) {
+int vmm_query(struct address_space *space, uint64_t virt, uint64_t *phys, unsigned *flags) {
     uint64_t *pte = get_pte(space->root, virt, 0);
-    if (!pte || !(*pte & DESC_VALID) || !(*pte & DESC_USER)) return 0;
-    return (*pte & ADDR_MASK) | (virt & (PAGE_SIZE - 1));
+    if (!pte || !(*pte & DESC_VALID)) return -1;
+    *phys = *pte & ADDR_MASK;
+    *flags = PAGE_PRESENT | ((*pte & DESC_USER) ? PAGE_USER : 0) |
+             ((*pte & DESC_RO) ? 0 : PAGE_WRITE) | ((*pte & DESC_COW) ? PAGE_COW : 0);
+    return 0;
+}
+
+int vmm_update(struct address_space *space, uint64_t virt, uint64_t phys, unsigned flags) {
+    uint64_t *pte = get_pte(space->root, virt, 0);
+    if (!pte || !(*pte & DESC_VALID)) return -1;
+    uint64_t entry = (*pte & ~(ADDR_MASK | DESC_RO | DESC_COW)) | (phys & ADDR_MASK);
+    if (!(flags & PAGE_WRITE)) entry |= DESC_RO;
+    if (flags & PAGE_COW) entry |= DESC_COW;
+    *pte = entry;
+    flush_tlb();
+    return 0;
 }
 
 uint64_t vmm_user_end(void) {
     return 0x0001000000000000ULL;
-}
-
-int vmm_user_range_ok(struct address_space *space, uint64_t virt, uint64_t len, int write) {
-    if (!len) return 1;
-    if (virt >= vmm_user_end() || len > vmm_user_end() - virt) return 0;
-    uint64_t last = (virt + len - 1) & ~(PAGE_SIZE - 1);
-    for (uint64_t page = virt & ~(PAGE_SIZE - 1);; page += PAGE_SIZE) {
-        uint64_t *pte = get_pte(space->root, page, 0);
-        if (!pte || !(*pte & DESC_VALID) || !(*pte & DESC_USER)) return 0;
-        if (write && (*pte & DESC_RO)) return 0;
-        if (page == last) break;
-    }
-    return 1;
 }

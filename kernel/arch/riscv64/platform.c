@@ -197,6 +197,11 @@ void riscv_trap(struct task_frame *frame) {
     uint64_t tval;
     __asm__ volatile ("csrr %0, stval" : "=r"(tval));
     if (arch_frame_from_user(frame)) {
+        if ((cause == 12 || cause == 13 || cause == 15) &&
+            vmm_resolve(vmm_space_current(), tval, cause == 15) == 0) {
+            user_return(frame);
+            return;
+        }
         signal_force(fault_signal(cause), tval);
         user_return(frame);
         return;
