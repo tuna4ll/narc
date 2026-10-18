@@ -46,6 +46,12 @@ enum narc_syscall {
     NARC_SYS_DUP2      = 0x010d,
     NARC_SYS_FCNTL     = 0x010e,
     NARC_SYS_IOCTL     = 0x010f,
+    NARC_SYS_MOUNT     = 0x0110,
+    NARC_SYS_UMOUNT    = 0x0111,
+    NARC_SYS_STAT      = 0x0112,
+    NARC_SYS_SYMLINK   = 0x0113,
+    NARC_SYS_READLINK  = 0x0114,
+    NARC_SYS_LINK      = 0x0115,
 
     NARC_SYS_MAP       = 0x0200,
     NARC_SYS_UNMAP     = 0x0201,
@@ -91,6 +97,10 @@ enum narc_status {
     NARC_EXEC_FORMAT      = 26,
     NARC_ACCESS_DENIED    = 27,
     NARC_TOO_BIG          = 28,
+    NARC_BUSY             = 29,
+    NARC_NO_DEVICE        = 30,
+    NARC_READ_ONLY_FS     = 31,
+    NARC_LOOP             = 32,
 };
 
 enum narc_signal {
@@ -192,6 +202,10 @@ enum narc_open_flags {
     NARC_OPEN_NOCTTY    = 1u << 9,
 };
 
+enum narc_mount_flags {
+    NARC_MOUNT_READONLY = 1u << 0,
+};
+
 enum narc_fcntl_command {
     NARC_FCNTL_DUPFD         = 0,
     NARC_FCNTL_DUPFD_CLOEXEC = 1,
@@ -283,7 +297,18 @@ typedef struct narc_file_info {
     uint32_t mode;
     uint8_t type;
     uint8_t reserved[3];
+    uint32_t nlink;
+    uint32_t uid;
+    uint32_t gid;
+    uint32_t rdev;
+    uint64_t device;
+    uint64_t blocks;
+    int64_t atime;
+    int64_t mtime;
+    int64_t ctime;
 } narc_file_info_t;
+
+#define NARC_STAT_NOFOLLOW 1u
 
 typedef struct narc_dir_entry {
     uint64_t inode;

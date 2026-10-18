@@ -1,6 +1,7 @@
 #include <kernel/heap.h>
 #include <kernel/mm.h>
 #include <kernel/string.h>
+#include <kernel/time.h>
 #include <kernel/vfs.h>
 #include <narc/abi.h>
 
@@ -28,10 +29,10 @@ struct tmpfs_node {
     struct tmpfs_dirent *entries;
     const uint8_t *archive;
     struct page_tree pages;
+    char *target;
 };
 
 static const struct vnode_ops tmpfs_ops;
-static struct mount tmpfs_mount;
 static uint64_t next_inode = 1;
 
 static struct tmpfs_node *tnode(struct vnode *node) {
@@ -96,10 +97,15 @@ static int detach_archive(struct tmpfs_node *node) {
     return 0;
 }
 
-static struct tmpfs_node *new_node(uint32_t mode, uint32_t rdev) {
+static int64_t now(void) {
+    return time_realtime_ns() / (int64_t)NSEC_PER_SEC;
+}
+
+static struct tmpfs_node *new_node(struct mount *mount, uint32_t mode, uint32_t rdev) {
     struct tmpfs_node *node = kzalloc(sizeof(*node));
     if (!node) return 0;
-    vnode_init(&node->vnode, &tmpfs_mount, &tmpfs_ops, mode);
+    vnode_init(&node->vnode, mount, &tmpfs_ops, mode);
+    node->vnode.atime = node->vnode.mtime = node->vnode.ctime = now();
     node->vnode.ino = next_inode++;
     node->vnode.rdev = rdev;
     return node;
@@ -107,6 +113,7 @@ static struct tmpfs_node *new_node(uint32_t mode, uint32_t rdev) {
 
 static void free_node(struct tmpfs_node *node) {
     release_pages(node);
+    kfree(node->target);
     kfree(node);
 }
 
@@ -166,7 +173,7 @@ static int tmpfs_create(struct vnode *dir, const char *name, size_t length, uint
     struct tmpfs_node *parent = tnode(dir);
     if (!dir->nlink) return -NARC_NOT_FOUND;
     if (*find_entry(parent, name, length)) return -NARC_EXISTS;
-    struct tmpfs_node *node = new_node(mode, rdev);
+    struct tmpfs_node *node = new_node(dir->mount, mode, rdev);
     struct tmpfs_dirent *entry = node ? new_entry(node, name, length) : 0;
     if (!entry) {
         kfree(node);
@@ -296,6 +303,7 @@ static long tmpfs_write(struct vnode *vnode, uint64_t offset, const void *buffer
     }
     if (!done && length) return -NARC_NO_SPACE;
     if (offset + done > vnode->size) vnode->size = offset + done;
+    vnode->mtime = vnode->ctime = now();
     return (long)done;
 }
 
@@ -319,6 +327,46 @@ static int tmpfs_truncate(struct vnode *vnode, uint64_t size) {
         if (tail) memset(tail + (size & (PAGE_SIZE - 1)), 0, PAGE_SIZE - (size & (PAGE_SIZE - 1)));
     }
     vnode->size = size;
+    vnode->mtime = vnode->ctime = now();
+    return 0;
+}
+
+static int tmpfs_symlink(struct vnode *dir, const char *name, size_t length, const char *target) {
+    size_t target_length = strlen(target);
+    if (!target_length || target_length >= VFS_PATH_MAX) return -NARC_INVALID_ARGUMENT;
+    char *copy = kmalloc(target_length + 1);
+    if (!copy) return -NARC_NO_SPACE;
+    memcpy(copy, target, target_length + 1);
+    struct vnode *node;
+    int status = tmpfs_create(dir, name, length, S_IFLNK | 0777, 0, &node);
+    if (status) {
+        kfree(copy);
+        return status;
+    }
+    tnode(node)->target = copy;
+    node->size = target_length;
+    vnode_put(node);
+    return 0;
+}
+
+static long tmpfs_readlink(struct vnode *vnode, char *buffer, size_t length) {
+    struct tmpfs_node *node = tnode(vnode);
+    if (!node->target) return -NARC_INVALID_ARGUMENT;
+    size_t size = strlen(node->target);
+    if (size > length) size = length;
+    memcpy(buffer, node->target, size);
+    return (long)size;
+}
+
+static int tmpfs_link(struct vnode *dir, const char *name, size_t length, struct vnode *target) {
+    struct tmpfs_node *parent = tnode(dir);
+    if (!dir->nlink) return -NARC_NOT_FOUND;
+    if (*find_entry(parent, name, length)) return -NARC_EXISTS;
+    struct tmpfs_dirent *entry = new_entry(tnode(target), name, length);
+    if (!entry) return -NARC_NO_SPACE;
+    append_entry(parent, entry);
+    target->nlink++;
+    target->ctime = now();
     return 0;
 }
 
@@ -335,16 +383,47 @@ static const struct vnode_ops tmpfs_ops = {
     .read = tmpfs_read,
     .write = tmpfs_write,
     .truncate = tmpfs_truncate,
+    .symlink = tmpfs_symlink,
+    .readlink = tmpfs_readlink,
+    .link = tmpfs_link,
     .release = tmpfs_release,
 };
 
-struct vnode *tmpfs_create_root(void) {
-    struct tmpfs_node *root = new_node(S_IFDIR | 0755, 0);
-    if (!root) return 0;
+static int tmpfs_mount(struct mount *mount, struct vnode *device) {
+    (void)device;
+    struct tmpfs_node *root = new_node(mount, S_IFDIR | 0755, 0);
+    if (!root) return -NARC_NO_MEMORY;
     root->vnode.nlink = 2;
     root->vnode.refs = 1;
-    tmpfs_mount.root = &root->vnode;
-    return &root->vnode;
+    mount->root = &root->vnode;
+    return 0;
+}
+
+static void free_tree(struct tmpfs_node *dir) {
+    while (dir->entries) {
+        struct tmpfs_dirent *entry = dir->entries;
+        dir->entries = entry->next;
+        if (entry->node->vnode.type == VFS_DIR) free_tree(entry->node);
+        drop_link(entry->node);
+        kfree(entry);
+    }
+}
+
+static int tmpfs_unmount(struct mount *mount) {
+    free_tree(tnode(mount->root));
+    return 0;
+}
+
+struct filesystem tmpfs_filesystem = {
+    .name = "tmpfs",
+    .mount = tmpfs_mount,
+    .unmount = tmpfs_unmount,
+};
+
+struct vnode *tmpfs_create_root(void) {
+    struct mount *mount = vfs_mount_alloc(&tmpfs_filesystem);
+    if (!mount || tmpfs_mount(mount, 0) != 0) return 0;
+    return mount->root;
 }
 
 int tmpfs_attach_archive(struct vnode *vnode, const void *data, uint64_t size) {
@@ -353,5 +432,6 @@ int tmpfs_attach_archive(struct vnode *vnode, const void *data, uint64_t size) {
     release_pages(node);
     node->archive = data;
     vnode->size = size;
+    vnode->mtime = vnode->ctime = now();
     return 0;
 }

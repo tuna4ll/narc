@@ -1,4 +1,5 @@
 #include <kernel/arch.h>
+#include <kernel/device.h>
 #include <kernel/heap.h>
 #include <kernel/limine.h>
 #include <kernel/mm.h>
@@ -76,6 +77,9 @@ void _start(void) {
 
     console_puts("[kernel] ring 0 initialized\n");
 
+    memory_devices_init();
+    tty_devices_init();
+    devfs_init();
     tty_init();
     user_start();
     sched_idle();

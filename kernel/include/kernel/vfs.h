@@ -28,6 +28,7 @@
 #define VFS_OPEN_EXCLUSIVE (1u << 5)
 #define VFS_OPEN_APPEND    (1u << 6)
 #define VFS_OPEN_NONBLOCK  (1u << 7)
+#define VFS_OPEN_NOCTTY    (1u << 8)
 #define VFS_STATUS_FLAGS   (VFS_OPEN_READ | VFS_OPEN_WRITE | VFS_OPEN_APPEND | VFS_OPEN_NONBLOCK)
 
 struct vnode;
@@ -50,7 +51,20 @@ struct vnode_ops {
     long (*read)(struct vnode *node, uint64_t offset, void *buffer, size_t length);
     long (*write)(struct vnode *node, uint64_t offset, const void *buffer, size_t length);
     int (*truncate)(struct vnode *node, uint64_t size);
+    int (*symlink)(struct vnode *dir, const char *name, size_t length, const char *target);
+    long (*readlink)(struct vnode *node, char *buffer, size_t length);
+    int (*link)(struct vnode *dir, const char *name, size_t length, struct vnode *node);
     void (*release)(struct vnode *node);
+};
+
+#define VFS_MOUNT_READONLY 1u
+
+struct filesystem {
+    struct filesystem *next;
+    const char *name;
+    int requires_device;
+    int (*mount)(struct mount *mount, struct vnode *device);
+    int (*unmount)(struct mount *mount);
 };
 
 struct vnode {
@@ -64,15 +78,20 @@ struct vnode {
     uint64_t size;
     int64_t atime, mtime, ctime;
     struct mount *mount;
+    struct mount *mounted;
     const struct vnode_ops *ops;
     void *data;
     struct mutex lock;
 };
 
 struct mount {
+    struct mount *next;
     struct vnode *root;
+    struct vnode *covered;
+    const struct filesystem *fs;
     void *data;
     uint64_t id;
+    uint32_t flags;
 };
 
 void vnode_init(struct vnode *node, struct mount *mount, const struct vnode_ops *ops,
@@ -82,11 +101,21 @@ void vnode_put(struct vnode *node);
 uint8_t vfs_mode_type(uint32_t mode);
 
 int vfs_init(const void *archive, uint64_t size);
+void vfs_register(struct filesystem *fs);
+struct mount *vfs_mount_alloc(const struct filesystem *fs);
+int vfs_mount(struct vnode *base, const char *source, const char *target, const char *type,
+              uint32_t flags);
+int vfs_umount(struct vnode *base, const char *target);
 struct vnode *vfs_root(void);
 int vfs_lookup(struct vnode *base, const char *path, struct vnode **result);
+int vfs_lookup_nofollow(struct vnode *base, const char *path, struct vnode **result);
+int vfs_symlink(struct vnode *base, const char *target, const char *path);
+long vfs_readlink(struct vnode *base, const char *path, char *buffer, size_t size);
+int vfs_link(struct vnode *base, const char *old_path, const char *new_path);
 int vfs_open(struct vnode *base, const char *path, uint32_t flags, uint32_t mode,
              struct vnode **result);
 int vfs_mkdir(struct vnode *base, const char *path, uint32_t mode);
+int vfs_mknod(struct vnode *base, const char *path, uint32_t mode, uint32_t rdev);
 int vfs_unlink(struct vnode *base, const char *path, int directory);
 int vfs_rename(struct vnode *base, const char *old_path, const char *new_path);
 long vfs_getcwd(struct vnode *dir, char *buffer, size_t size);
@@ -95,6 +124,7 @@ long vfs_write(struct vnode *node, uint64_t offset, const void *buffer, size_t l
 int vfs_truncate(struct vnode *node, uint64_t size);
 int vfs_readdir(struct vnode *dir, uint64_t *cookie, struct vfs_dirent *entry);
 
+extern struct filesystem tmpfs_filesystem;
 struct vnode *tmpfs_create_root(void);
 int tmpfs_attach_archive(struct vnode *node, const void *data, uint64_t size);
 int initramfs_unpack(struct vnode *root, const void *archive, uint64_t size);

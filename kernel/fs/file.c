@@ -1,3 +1,4 @@
+#include <kernel/device.h>
 #include <kernel/file.h>
 #include <kernel/heap.h>
 #include <kernel/string.h>
@@ -40,6 +41,11 @@ int file_open(struct vnode *base, const char *path, uint32_t flags, uint32_t mod
     struct vnode *node;
     int status = vfs_open(base, path, flags, mode, &node);
     if (status) return status;
+    if (node->type == VFS_CHR || node->type == VFS_BLK) {
+        status = device_open(node, flags, result);
+        vnode_put(node);
+        return status;
+    }
     struct open_file *open = file_alloc(&vnode_file_ops, 0);
     if (!open) {
         vnode_put(node);

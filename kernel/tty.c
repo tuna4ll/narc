@@ -1,5 +1,6 @@
 #include <kernel/arch.h>
 #include <kernel/console.h>
+#include <kernel/device.h>
 #include <kernel/mutex.h>
 #include <kernel/serial.h>
 #include <kernel/signal.h>
@@ -483,4 +484,35 @@ struct open_file *tty_open(void) {
     struct open_file *open = file_alloc(&tty_ops, &console);
     if (open) open->flags = VFS_OPEN_READ | VFS_OPEN_WRITE;
     return open;
+}
+
+static int open_console(struct char_device *device, uint32_t flags, struct open_file **result) {
+    (void)device;
+    struct task *self = task_current();
+    if (!(flags & VFS_OPEN_NOCTTY) && self->pid == self->sid && !self->ctty && !console.session) {
+        console.session = self->sid;
+        console.pgrp = self->pgid;
+        task_attach_tty(&console, self->sid);
+    }
+    *result = file_alloc(&tty_ops, &console);
+    return *result ? 0 : -NARC_NO_MEMORY;
+}
+
+static int open_controlling(struct char_device *device, uint32_t flags, struct open_file **result) {
+    (void)device;
+    (void)flags;
+    struct tty *tty = task_current()->ctty;
+    if (!tty) return -NARC_NO_DEVICE;
+    *result = file_alloc(&tty_ops, tty);
+    return *result ? 0 : -NARC_NO_MEMORY;
+}
+
+static struct char_device tty_devices[] = {
+    { 0, DEVICE_MAKE(5, 0), "tty", open_controlling, 0 },
+    { 0, DEVICE_MAKE(5, 1), "console", open_console, 0 },
+};
+
+void tty_devices_init(void) {
+    device_register(&tty_devices[0]);
+    device_register(&tty_devices[1]);
 }

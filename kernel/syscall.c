@@ -162,6 +162,7 @@ static struct kernel_result handle_open(uint64_t address, uint64_t length, uint6
     if (flags & NARC_OPEN_EXCLUSIVE) native_flags |= VFS_OPEN_EXCLUSIVE;
     if (flags & NARC_OPEN_APPEND) native_flags |= VFS_OPEN_APPEND;
     if (flags & NARC_OPEN_NONBLOCK) native_flags |= VFS_OPEN_NONBLOCK;
+    if (flags & NARC_OPEN_NOCTTY) native_flags |= VFS_OPEN_NOCTTY;
     struct open_file *open;
     uint32_t create_mode = (uint32_t)mode & 07777 & ~task_umask(0, 0);
     int status = file_open(task_cwd(), path, native_flags, create_mode, &open);
@@ -248,6 +249,53 @@ static struct kernel_result handle_getcwd(uint64_t address, uint64_t size) {
     return result_status(length);
 }
 
+static struct kernel_result handle_mount(uint64_t source_address, uint64_t target_address,
+                                         uint64_t type_address, uint64_t flags) {
+    if (flags & ~(uint64_t)NARC_MOUNT_READONLY) return result_error(NARC_INVALID_ARGUMENT);
+    char *source = source_address ? copy_user_string(source_address) : 0;
+    char *target = copy_user_string(target_address);
+    char *type = copy_user_string(type_address);
+    int status = -NARC_BAD_ADDRESS;
+    if (target && type && (source || !source_address))
+        status = vfs_mount(task_cwd(), source, target, type,
+                           (flags & NARC_MOUNT_READONLY) ? VFS_MOUNT_READONLY : 0);
+    kfree(source);
+    kfree(target);
+    kfree(type);
+    return result_status(status);
+}
+
+static struct kernel_result handle_umount(uint64_t target_address) {
+    char *target = copy_user_string(target_address);
+    if (!target) return result_error(NARC_BAD_ADDRESS);
+    int status = vfs_umount(task_cwd(), target);
+    kfree(target);
+    return result_status(status);
+}
+
+static struct kernel_result handle_two_paths(uint64_t first, uint64_t second, int link) {
+    char *a = copy_user_string(first);
+    char *b = copy_user_string(second);
+    int status = -NARC_BAD_ADDRESS;
+    if (a && b) status = link ? vfs_link(task_cwd(), a, b) : vfs_symlink(task_cwd(), a, b);
+    kfree(a);
+    kfree(b);
+    return result_status(status);
+}
+
+static struct kernel_result handle_readlink(uint64_t path_address, uint64_t buffer,
+                                            uint64_t size) {
+    char *path = copy_user_string(path_address);
+    if (!path) return result_error(NARC_BAD_ADDRESS);
+    if (size > VFS_PATH_MAX) size = VFS_PATH_MAX;
+    char *target = kmalloc(size ? (size_t)size : 1);
+    long length = target ? vfs_readlink(task_cwd(), path, target, (size_t)size) : -NARC_NO_MEMORY;
+    if (length >= 0 && copy_to_user(buffer, target, (size_t)length) != 0) length = -NARC_BAD_ADDRESS;
+    kfree(path);
+    kfree(target);
+    return result_status(length);
+}
+
 static struct kernel_result handle_close(uint64_t fd) {
     if (fd_close(task_files(), (int)fd) != 0) return result_error(NARC_BAD_HANDLE);
     return result_ok(0);
@@ -272,23 +320,55 @@ static uint8_t native_type(uint8_t type) {
     }
 }
 
+static void fill_info(struct vnode *node, narc_file_info_t *info) {
+    memset(info, 0, sizeof(*info));
+    info->inode = node->ino;
+    info->size = node->size;
+    info->mode = node->mode;
+    info->type = native_type(node->type);
+    info->nlink = node->nlink;
+    info->uid = node->uid;
+    info->gid = node->gid;
+    info->rdev = node->rdev;
+    info->device = node->mount ? node->mount->id : 0;
+    info->blocks = (node->size + 511) / 512;
+    info->atime = node->atime;
+    info->mtime = node->mtime;
+    info->ctime = node->ctime;
+}
+
 static struct kernel_result handle_file_info(uint64_t fd, uint64_t address) {
     struct open_file *open = fd_get(task_files(), (int)fd);
     if (!open) return result_error(NARC_BAD_HANDLE);
-
-    narc_file_info_t info = { 0 };
-    struct vnode *node = open->node;
-    if (node) {
-        info.inode = node->ino;
-        info.size = node->size;
-        info.mode = node->mode;
-        info.type = native_type(node->type);
+    narc_file_info_t info;
+    if (open->node) {
+        fill_info(open->node, &info);
     } else {
-        info.mode = 0020000 | 0666;
+        memset(&info, 0, sizeof(info));
+        info.mode = open->ops->ioctl ? (0020000 | 0620) : (0010000 | 0600);
         info.type = NARC_FILE_CHARACTER;
+        info.nlink = 1;
     }
     file_put(open);
     if (copy_to_user(address, &info, sizeof(info)) != 0)
+        return result_error(NARC_BAD_ADDRESS);
+    return result_ok(0);
+}
+
+static struct kernel_result handle_stat(uint64_t address, uint64_t length, uint64_t info_address,
+                                        uint64_t flags) {
+    char *path;
+    uint32_t status = copy_path(&path, address, length);
+    if (status != NARC_OK) return result_error(status);
+    struct vnode *node;
+    int result = (flags & NARC_STAT_NOFOLLOW) ? vfs_lookup_nofollow(task_cwd(), path, &node)
+                                              : vfs_lookup(task_cwd(), path, &node);
+    kfree(path);
+    if (result) return result_status(result);
+    narc_file_info_t info;
+    fill_info(node, &info);
+    vnode_put(node);
+    if (copy_to_user(info_address, &info, sizeof(info)) != 0)
         return result_error(NARC_BAD_ADDRESS);
     return result_ok(0);
 }
@@ -603,6 +683,24 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return;
     case NARC_SYS_IOCTL:
         return_result(frame, handle_ioctl(a1, a2, a3));
+        return;
+    case NARC_SYS_MOUNT:
+        return_result(frame, handle_mount(a1, a2, a3, arch_syscall_arg(frame, 3)));
+        return;
+    case NARC_SYS_UMOUNT:
+        return_result(frame, handle_umount(a1));
+        return;
+    case NARC_SYS_SYMLINK:
+        return_result(frame, handle_two_paths(a1, a2, 0));
+        return;
+    case NARC_SYS_LINK:
+        return_result(frame, handle_two_paths(a1, a2, 1));
+        return;
+    case NARC_SYS_READLINK:
+        return_result(frame, handle_readlink(a1, a2, a3));
+        return;
+    case NARC_SYS_STAT:
+        return_result(frame, handle_stat(a1, a2, a3, arch_syscall_arg(frame, 3)));
         return;
     case NARC_SYS_MAP:
         return_result(frame, handle_map(a1, a2));

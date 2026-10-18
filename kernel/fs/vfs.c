@@ -6,6 +6,28 @@
 
 static struct vnode *root;
 static struct mutex namespace_lock = MUTEX_INIT;
+static struct filesystem *filesystems;
+static struct mount *mounts;
+static uint64_t next_mount_id = 1;
+
+void vfs_register(struct filesystem *fs) {
+    fs->next = filesystems;
+    filesystems = fs;
+}
+
+struct mount *vfs_mount_alloc(const struct filesystem *fs) {
+    struct mount *mount = kzalloc(sizeof(*mount));
+    if (!mount) return 0;
+    mount->fs = fs;
+    mount->id = next_mount_id++;
+    return mount;
+}
+
+static const struct filesystem *find_filesystem(const char *name) {
+    for (struct filesystem *fs = filesystems; fs; fs = fs->next)
+        if (!strcmp(fs->name, name)) return fs;
+    return 0;
+}
 
 uint8_t vfs_mode_type(uint32_t mode) {
     switch (mode & S_IFMT) {
@@ -41,6 +63,10 @@ struct vnode *vfs_root(void) {
     return root;
 }
 
+static int read_only(struct vnode *node) {
+    return (node->mount->flags & VFS_MOUNT_READONLY) != 0;
+}
+
 static int dot(const char *name, size_t length) {
     return length == 1 && name[0] == '.';
 }
@@ -49,38 +75,100 @@ static int dotdot(const char *name, size_t length) {
     return length == 2 && name[0] == '.' && name[1] == '.';
 }
 
+static struct vnode *cross_down(struct vnode *node) {
+    while (node->mounted) {
+        struct vnode *next = vnode_get(node->mounted->root);
+        vnode_put(node);
+        node = next;
+    }
+    return node;
+}
+
+static struct vnode *cross_up(struct vnode *node) {
+    while (node != root && node == node->mount->root && node->mount->covered) {
+        struct vnode *next = vnode_get(node->mount->covered);
+        vnode_put(node);
+        node = next;
+    }
+    return node;
+}
+
 static int step(struct vnode **node, const char *name, size_t length) {
-    struct vnode *current = *node;
-    if (current->type != VFS_DIR) return -NARC_NOT_DIRECTORY;
+    if ((*node)->type != VFS_DIR) return -NARC_NOT_DIRECTORY;
     if (length > VFS_NAME_MAX) return -NARC_NAME_TOO_LONG;
-    if (dot(name, length) || (dotdot(name, length) && current == root)) return 0;
+    if (dot(name, length) || (dotdot(name, length) && *node == root)) return 0;
+    if (dotdot(name, length)) *node = cross_up(*node);
+    struct vnode *current = *node;
     struct vnode *next;
     int status = current->ops->lookup(current, name, length, &next);
     if (status) return status;
     vnode_put(current);
-    *node = next;
+    *node = cross_down(next);
     return 0;
 }
 
-static int walk(struct vnode *base, const char *path, size_t length, struct vnode **result) {
-    struct vnode *node = vnode_get(length && path[0] == '/' ? root : base);
+#define SYMLINK_DEPTH 40
+
+static int walk_depth(struct vnode *base, const char *path, size_t length, int follow,
+                      int *depth, struct vnode **result);
+
+static int follow_link(struct vnode *dir, struct vnode *link, int *depth, struct vnode **result) {
+    if (++*depth > SYMLINK_DEPTH) return -NARC_LOOP;
+    if (!link->ops->readlink) return -NARC_INVALID_ARGUMENT;
+    char *target = kmalloc(VFS_PATH_MAX);
+    if (!target) return -NARC_NO_MEMORY;
+    long length = link->ops->readlink(link, target, VFS_PATH_MAX - 1);
+    int status = length < 0 ? (int)length : 0;
+    if (!status) status = walk_depth(dir, target, (size_t)length, 1, depth, result);
+    kfree(target);
+    return status;
+}
+
+static int walk_depth(struct vnode *base, const char *path, size_t length, int follow,
+                      int *depth, struct vnode **result) {
+    if (!length) return -NARC_NOT_FOUND;
+    struct vnode *node = vnode_get(path[0] == '/' ? root : base);
     for (size_t i = 0; i < length;) {
         while (i < length && path[i] == '/') i++;
         size_t start = i;
         while (i < length && path[i] != '/') i++;
         if (i == start) break;
+        struct vnode *parent = vnode_get(node);
         int status = step(&node, path + start, i - start);
+        if (!status && node->type == VFS_LNK && (follow || i < length)) {
+            struct vnode *target;
+            status = follow_link(parent, node, depth, &target);
+            if (!status) {
+                vnode_put(node);
+                node = target;
+            }
+        }
+        vnode_put(parent);
         if (status) {
             vnode_put(node);
             return status;
         }
     }
-    if (length && path[length - 1] == '/' && node->type != VFS_DIR) {
+    if (path[length - 1] == '/' && node->type != VFS_DIR) {
         vnode_put(node);
         return -NARC_NOT_DIRECTORY;
     }
     *result = node;
     return 0;
+}
+
+static int walk_mode(struct vnode *base, const char *path, size_t length, int follow,
+                     struct vnode **result) {
+    int depth = 0;
+    return walk_depth(base, path, length, follow, &depth, result);
+}
+
+static int walk(struct vnode *base, const char *path, size_t length, struct vnode **result) {
+    if (!length) {
+        *result = vnode_get(base);
+        return 0;
+    }
+    return walk_mode(base, path, length, 1, result);
 }
 
 static int lookup_parent(struct vnode *base, const char *path, struct vnode **parent,
@@ -103,6 +191,64 @@ static int lookup_parent(struct vnode *base, const char *path, struct vnode **pa
     return 0;
 }
 
+int vfs_lookup_nofollow(struct vnode *base, const char *path, struct vnode **result) {
+    if (!*path) return -NARC_NOT_FOUND;
+    mutex_lock(&namespace_lock);
+    int status = walk_mode(base, path, strlen(path), 0, result);
+    mutex_unlock(&namespace_lock);
+    return status;
+}
+
+int vfs_symlink(struct vnode *base, const char *target, const char *path) {
+    struct vnode *parent;
+    const char *name;
+    size_t length;
+    mutex_lock(&namespace_lock);
+    int status = lookup_parent(base, path, &parent, &name, &length);
+    if (!status) {
+        if (read_only(parent)) status = -NARC_READ_ONLY_FS;
+        else status = parent->ops->symlink ? parent->ops->symlink(parent, name, length, target) :
+                                             -NARC_NOT_SUPPORTED;
+        vnode_put(parent);
+    }
+    mutex_unlock(&namespace_lock);
+    return status;
+}
+
+long vfs_readlink(struct vnode *base, const char *path, char *buffer, size_t size) {
+    struct vnode *node;
+    int status = vfs_lookup_nofollow(base, path, &node);
+    if (status) return status;
+    long result = node->type != VFS_LNK || !node->ops->readlink ? -NARC_INVALID_ARGUMENT :
+                  node->ops->readlink(node, buffer, size);
+    vnode_put(node);
+    return result;
+}
+
+int vfs_link(struct vnode *base, const char *old_path, const char *new_path) {
+    struct vnode *node, *parent;
+    const char *name;
+    size_t length;
+    mutex_lock(&namespace_lock);
+    int status = walk_mode(base, old_path, strlen(old_path), 0, &node);
+    if (status) {
+        mutex_unlock(&namespace_lock);
+        return status;
+    }
+    status = lookup_parent(base, new_path, &parent, &name, &length);
+    if (!status) {
+        if (node->type == VFS_DIR) status = -NARC_NOT_PERMITTED;
+        else if (parent->mount != node->mount) status = -NARC_CROSS_DEVICE;
+        else if (read_only(parent)) status = -NARC_READ_ONLY_FS;
+        else status = parent->ops->link ? parent->ops->link(parent, name, length, node) :
+                                          -NARC_NOT_SUPPORTED;
+        vnode_put(parent);
+    }
+    vnode_put(node);
+    mutex_unlock(&namespace_lock);
+    return status;
+}
+
 int vfs_lookup(struct vnode *base, const char *path, struct vnode **result) {
     if (!*path) return -NARC_NOT_FOUND;
     mutex_lock(&namespace_lock);
@@ -111,15 +257,16 @@ int vfs_lookup(struct vnode *base, const char *path, struct vnode **result) {
     return status;
 }
 
-static int create_locked(struct vnode *base, const char *path, uint32_t mode,
+static int create_locked(struct vnode *base, const char *path, uint32_t mode, uint32_t rdev,
                          struct vnode **result) {
     struct vnode *parent;
     const char *name;
     size_t length;
     int status = lookup_parent(base, path, &parent, &name, &length);
     if (status) return status;
-    status = parent->ops->create ? parent->ops->create(parent, name, length, mode, 0, result) :
-                                   -NARC_NOT_SUPPORTED;
+    if (read_only(parent)) status = -NARC_READ_ONLY_FS;
+    else status = parent->ops->create ? parent->ops->create(parent, name, length, mode, rdev, result) :
+                                        -NARC_NOT_SUPPORTED;
     vnode_put(parent);
     return status;
 }
@@ -128,13 +275,15 @@ static int open_locked(struct vnode *base, const char *path, uint32_t flags, uin
                        struct vnode **result) {
     int status = walk(base, path, strlen(path), result);
     if (status == -NARC_NOT_FOUND && (flags & VFS_OPEN_CREATE))
-        return create_locked(base, path, S_IFREG | (mode & 07777), result);
+        return create_locked(base, path, S_IFREG | (mode & 07777), 0, result);
     if (status) return status;
     if ((flags & VFS_OPEN_CREATE) && (flags & VFS_OPEN_EXCLUSIVE)) status = -NARC_EXISTS;
     else if ((flags & VFS_OPEN_DIRECTORY) && (*result)->type != VFS_DIR)
         status = -NARC_NOT_DIRECTORY;
     else if ((flags & VFS_OPEN_WRITE) && (*result)->type == VFS_DIR)
         status = -NARC_IS_DIRECTORY;
+    else if ((flags & VFS_OPEN_WRITE) && (*result)->type == VFS_REG && read_only(*result))
+        status = -NARC_READ_ONLY_FS;
     if (status) vnode_put(*result);
     return status;
 }
@@ -155,7 +304,14 @@ int vfs_open(struct vnode *base, const char *path, uint32_t flags, uint32_t mode
 
 int vfs_mkdir(struct vnode *base, const char *path, uint32_t mode) {
     mutex_lock(&namespace_lock);
-    int status = create_locked(base, path, S_IFDIR | (mode & 07777), 0);
+    int status = create_locked(base, path, S_IFDIR | (mode & 07777), 0, 0);
+    mutex_unlock(&namespace_lock);
+    return status;
+}
+
+int vfs_mknod(struct vnode *base, const char *path, uint32_t mode, uint32_t rdev) {
+    mutex_lock(&namespace_lock);
+    int status = create_locked(base, path, mode, rdev, 0);
     mutex_unlock(&namespace_lock);
     return status;
 }
@@ -166,9 +322,18 @@ int vfs_unlink(struct vnode *base, const char *path, int directory) {
     size_t length;
     mutex_lock(&namespace_lock);
     int status = lookup_parent(base, path, &parent, &name, &length);
-    if (!status) {
-        status = parent->ops->unlink ? parent->ops->unlink(parent, name, length, directory) :
-                                       -NARC_NOT_SUPPORTED;
+    if (!status && read_only(parent)) {
+        vnode_put(parent);
+        status = -NARC_READ_ONLY_FS;
+    } else if (!status) {
+        struct vnode *victim;
+        if (parent->ops->lookup(parent, name, length, &victim) == 0) {
+            if (victim->mounted || (victim == victim->mount->root)) status = -NARC_BUSY;
+            vnode_put(victim);
+        }
+        if (!status)
+            status = parent->ops->unlink ? parent->ops->unlink(parent, name, length, directory) :
+                                           -NARC_NOT_SUPPORTED;
         vnode_put(parent);
     }
     mutex_unlock(&namespace_lock);
@@ -203,6 +368,7 @@ static int rename_locked(struct vnode *base, const char *old_path, const char *n
         vnode_put(node);
     }
     if (!status && old_parent->mount != new_parent->mount) status = -NARC_CROSS_DEVICE;
+    if (!status && read_only(old_parent)) status = -NARC_READ_ONLY_FS;
     if (!status)
         status = old_parent->ops->rename ?
                  old_parent->ops->rename(old_parent, old_name, old_length,
@@ -240,6 +406,8 @@ static long getcwd_locked(struct vnode *dir, char *buffer, size_t size) {
     struct vnode *node = vnode_get(dir);
     long status = 0;
     while (!status && node != root) {
+        node = cross_up(node);
+        if (node == root) break;
         struct vnode *parent;
         status = node->ops->lookup(node, "..", 2, &parent);
         if (status) break;
@@ -284,6 +452,7 @@ long vfs_read(struct vnode *node, uint64_t offset, void *buffer, size_t length) 
 
 long vfs_write(struct vnode *node, uint64_t offset, const void *buffer, size_t length) {
     if (node->type == VFS_DIR) return -NARC_IS_DIRECTORY;
+    if (read_only(node)) return -NARC_READ_ONLY_FS;
     if (node->type != VFS_REG || !node->ops->write) return -NARC_INVALID_ARGUMENT;
     mutex_lock(&node->lock);
     long result = node->ops->write(node, offset, buffer, length);
@@ -293,6 +462,7 @@ long vfs_write(struct vnode *node, uint64_t offset, const void *buffer, size_t l
 
 int vfs_truncate(struct vnode *node, uint64_t size) {
     if (node->type == VFS_DIR) return -NARC_IS_DIRECTORY;
+    if (read_only(node)) return -NARC_READ_ONLY_FS;
     if (node->type != VFS_REG || !node->ops->truncate) return -NARC_INVALID_ARGUMENT;
     mutex_lock(&node->lock);
     int status = node->ops->truncate(node, size);
@@ -308,7 +478,77 @@ int vfs_readdir(struct vnode *dir, uint64_t *cookie, struct vfs_dirent *entry) {
     return result;
 }
 
+static int mount_locked(struct vnode *base, const char *source, const char *target,
+                        const char *type, uint32_t flags) {
+    const struct filesystem *fs = find_filesystem(type);
+    if (!fs) return -NARC_NO_DEVICE;
+    struct vnode *point, *device = 0;
+    int status = walk(base, target, strlen(target), &point);
+    if (status) return status;
+    if (point->type != VFS_DIR) status = -NARC_NOT_DIRECTORY;
+    else if (point->mounted || (point == point->mount->root && point != root)) status = -NARC_BUSY;
+    if (!status && fs->requires_device) {
+        status = source ? walk(base, source, strlen(source), &device) : -NARC_NO_DEVICE;
+        if (!status && device->type != VFS_BLK) status = -NARC_NO_DEVICE;
+    }
+    struct mount *mount = status ? 0 : vfs_mount_alloc(fs);
+    if (!status && !mount) status = -NARC_NO_MEMORY;
+    if (!status) {
+        mount->flags = flags;
+        status = fs->mount(mount, device);
+    }
+    vnode_put(device);
+    if (status) {
+        kfree(mount);
+        vnode_put(point);
+        return status;
+    }
+    mount->covered = point;
+    point->mounted = mount;
+    mount->next = mounts;
+    mounts = mount;
+    return 0;
+}
+
+int vfs_mount(struct vnode *base, const char *source, const char *target, const char *type,
+              uint32_t flags) {
+    mutex_lock(&namespace_lock);
+    int status = mount_locked(base, source, target, type, flags);
+    mutex_unlock(&namespace_lock);
+    return status;
+}
+
+static int umount_locked(struct vnode *base, const char *target) {
+    struct vnode *node;
+    int status = walk(base, target, strlen(target), &node);
+    if (status) return status;
+    struct mount *mount = node->mount;
+    if (node != mount->root || !mount->covered) status = -NARC_INVALID_ARGUMENT;
+    else if (node->refs > 2 || node->mounted) status = -NARC_BUSY;
+    for (struct mount *other = mounts; !status && other; other = other->next)
+        if (other != mount && other->covered && other->covered->mount == mount) status = -NARC_BUSY;
+    vnode_put(node);
+    if (status) return status;
+    if (mount->fs->unmount && (status = mount->fs->unmount(mount)) != 0) return status;
+    struct mount **link = &mounts;
+    while (*link != mount) link = &(*link)->next;
+    *link = mount->next;
+    mount->covered->mounted = 0;
+    vnode_put(mount->covered);
+    vnode_put(mount->root);
+    kfree(mount);
+    return 0;
+}
+
+int vfs_umount(struct vnode *base, const char *target) {
+    mutex_lock(&namespace_lock);
+    int status = umount_locked(base, target);
+    mutex_unlock(&namespace_lock);
+    return status;
+}
+
 int vfs_init(const void *archive, uint64_t size) {
+    vfs_register(&tmpfs_filesystem);
     root = tmpfs_create_root();
     if (!root) return -1;
     return initramfs_unpack(root, archive, size) == 0 ? 0 : -1;

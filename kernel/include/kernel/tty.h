@@ -45,5 +45,6 @@ struct tty;
 void tty_init(void);
 void tty_input(char c);
 struct open_file *tty_open(void);
+void tty_devices_init(void);
 struct tty *tty_console(void);
 void tty_session_exit(struct tty *tty, int session);

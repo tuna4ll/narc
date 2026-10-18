@@ -31,6 +31,10 @@ static int status_errno(uint32_t status) {
     case NARC_EXEC_FORMAT:      return ENOEXEC;
     case NARC_ACCESS_DENIED:    return EACCES;
     case NARC_TOO_BIG:          return E2BIG;
+    case NARC_BUSY:             return EBUSY;
+    case NARC_NO_DEVICE:        return ENODEV;
+    case NARC_READ_ONLY_FS:     return EROFS;
+    case NARC_LOOP:             return ELOOP;
     default:                    return EIO;
     }
 }
