@@ -7,6 +7,7 @@
 #include <kernel/signal.h>
 #include <kernel/task.h>
 #include <kernel/time.h>
+#include <kernel/virtio.h>
 #include <narc/abi.h>
 
 #define GICD_BASE 0x08000000ULL
@@ -85,6 +86,10 @@ int64_t arch_rtc_seconds(void) {
     volatile uint32_t *rtc = phys_to_virt(RTC_BASE);
     vmm_map_kernel((uint64_t)(uintptr_t)rtc, RTC_BASE, VMM_WRITE | VMM_DEVICE);
     return rtc[0];
+}
+
+void arch_probe_devices(void) {
+    virtio_mmio_probe(0x0a000000ULL, 0x200, 32);
 }
 
 void arch_halt(void) {

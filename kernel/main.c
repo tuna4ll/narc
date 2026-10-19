@@ -77,6 +77,7 @@ void _start(void) {
 
     console_puts("[kernel] ring 0 initialized\n");
 
+    arch_probe_devices();
     memory_devices_init();
     tty_devices_init();
     devfs_init();

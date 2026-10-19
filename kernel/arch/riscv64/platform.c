@@ -7,6 +7,7 @@
 #include <kernel/serial.h>
 #include <kernel/task.h>
 #include <kernel/time.h>
+#include <kernel/virtio.h>
 #include <narc/abi.h>
 
 #define PLIC_BASE 0x0c000000ULL
@@ -55,6 +56,10 @@ int64_t arch_rtc_seconds(void) {
     uint64_t low = rtc[0];
     uint64_t high = rtc[1];
     return (int64_t)(((high << 32) | low) / NSEC_PER_SEC);
+}
+
+void arch_probe_devices(void) {
+    virtio_mmio_probe(0x10001000ULL, 0x1000, 8);
 }
 
 void arch_halt(void) {

@@ -1,3 +1,4 @@
+#include <kernel/block.h>
 #include <kernel/device.h>
 #include <kernel/string.h>
 #include <kernel/vfs.h>
@@ -11,6 +12,13 @@ void device_register(struct char_device *device) {
 }
 
 int device_open(struct vnode *node, uint32_t flags, struct open_file **result) {
+    if (node->type == VFS_BLK) {
+        struct block_device *block = block_find(node->rdev);
+        if (!block) return -NARC_NO_DEVICE;
+        int status = block_open(block, flags, result);
+        if (!status) (*result)->node = vnode_get(node);
+        return status;
+    }
     for (struct char_device *device = devices; device; device = device->next) {
         if (device->rdev != node->rdev) continue;
         int status = device->open(device, flags, result);
@@ -36,4 +44,5 @@ void devfs_init(void) {
     node("/dev/urandom", S_IFCHR | 0666, DEVICE_MAKE(1, 9));
     node("/dev/tty", S_IFCHR | 0666, DEVICE_MAKE(5, 0));
     node("/dev/console", S_IFCHR | 0600, DEVICE_MAKE(5, 1));
+    block_publish();
 }

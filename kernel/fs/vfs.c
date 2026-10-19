@@ -549,6 +549,7 @@ int vfs_umount(struct vnode *base, const char *target) {
 
 int vfs_init(const void *archive, uint64_t size) {
     vfs_register(&tmpfs_filesystem);
+    vfs_register(&ext2_filesystem);
     root = tmpfs_create_root();
     if (!root) return -1;
     return initramfs_unpack(root, archive, size) == 0 ? 0 : -1;

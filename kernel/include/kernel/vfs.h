@@ -125,6 +125,7 @@ int vfs_truncate(struct vnode *node, uint64_t size);
 int vfs_readdir(struct vnode *dir, uint64_t *cookie, struct vfs_dirent *entry);
 
 extern struct filesystem tmpfs_filesystem;
+extern struct filesystem ext2_filesystem;
 struct vnode *tmpfs_create_root(void);
 int tmpfs_attach_archive(struct vnode *node, const void *data, uint64_t size);
 int initramfs_unpack(struct vnode *root, const void *archive, uint64_t size);
