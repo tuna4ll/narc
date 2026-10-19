@@ -18,6 +18,8 @@ INITRAMFS := $(BUILD)/initramfs.tar
 INITRAMFS_ROOT := $(BUILD)/initramfs_root
 USER_BASE := 0x400000
 ROOTFS_FILES := $(shell find userland/rootfs -type f 2>/dev/null | sort)
+DISK := $(BUILD)/disk.img
+DISK_SIZE ?= 32M
 
 DEPFLAGS := -MMD -MP
 COMMON_CFLAGS := -std=gnu11 -O2 -Wall -Wextra -Werror -ffreestanding \
@@ -101,7 +103,7 @@ KERNEL_S := $(COMMON_KERNEL_S) $(ARCH_KERNEL_S)
 KERNEL_O := $(patsubst %.c,$(BUILD)/%.o,$(KERNEL_C)) \
             $(patsubst %.S,$(BUILD)/%.o,$(KERNEL_S))
 
-.PHONY: all kernel libnarc libc sysroot userland iso run run-serial clean distclean
+.PHONY: all kernel libnarc libc sysroot userland iso disk run run-serial clean distclean
 all: iso
 
 include recipes/limine/RECIPE
@@ -220,24 +222,35 @@ iso: $(BUILD)/kernel.elf $(INITRAMFS) $(LIMINE_TOOL)
 		$(BUILD)/iso_root -o $(DIST)/narc-$(ARCH).iso
 	$(if $(filter x86_64,$(ARCH)),$(LIMINE_TOOL) bios-install $(DIST)/narc-$(ARCH).iso)
 
+$(DISK):
+	@mkdir -p $(dir $@)
+	mkfs.ext2 -q -F -L narc $@ $(DISK_SIZE)
+
+disk: $(DISK)
+
 ifeq ($(ARCH),x86_64)
-run run-serial: iso
+run run-serial: iso $(DISK)
 	qemu-system-x86_64 -M q35 -m 256M -vga std -cdrom $(DIST)/narc-$(ARCH).iso \
+		-drive file=$(DISK),if=none,format=raw,id=hd0 -device virtio-blk-pci,drive=hd0 \
 		-serial $(if $(filter run-serial,$@),stdio,none) -monitor none -no-reboot -no-shutdown
 else ifeq ($(ARCH),aarch64)
-run run-serial: iso $(EDK2_PREPARED)
+run run-serial: iso $(DISK) $(EDK2_PREPARED)
 	cp $(EDK2_DIR)/ovmf-vars-aarch64.fd $(BUILD)/ovmf-vars.fd
 	qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -device ramfb \
 		-drive if=pflash,unit=0,format=raw,file=$(EDK2_DIR)/ovmf-code-aarch64.fd,readonly=on \
 		-drive if=pflash,unit=1,format=raw,file=$(BUILD)/ovmf-vars.fd \
+		-drive file=$(DISK),if=none,format=raw,id=hd0 -global virtio-mmio.force-legacy=false \
+		-device virtio-blk-device,drive=hd0 \
 		-cdrom $(DIST)/narc-$(ARCH).iso -serial $(if $(filter run-serial,$@),stdio,none) \
 		-monitor none -no-reboot -no-shutdown
 else
-run run-serial: iso $(EDK2_PREPARED)
+run run-serial: iso $(DISK) $(EDK2_PREPARED)
 	cp $(EDK2_DIR)/ovmf-vars-riscv64.fd $(BUILD)/ovmf-vars.fd
 	qemu-system-riscv64 -M virt -cpu rv64 -m 256M -device ramfb \
 		-drive if=pflash,unit=0,format=raw,file=$(EDK2_DIR)/ovmf-code-riscv64.fd,readonly=on \
 		-drive if=pflash,unit=1,format=raw,file=$(BUILD)/ovmf-vars.fd \
+		-drive file=$(DISK),if=none,format=raw,id=hd0 -global virtio-mmio.force-legacy=false \
+		-device virtio-blk-device,drive=hd0 \
 		-cdrom $(DIST)/narc-$(ARCH).iso -serial $(if $(filter run-serial,$@),stdio,none) \
 		-monitor none -no-reboot -no-shutdown
 endif

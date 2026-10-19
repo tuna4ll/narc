@@ -1,0 +1,2 @@
+# source  target  type  options
+/dev/vda  /mnt  ext2  rw,nofail

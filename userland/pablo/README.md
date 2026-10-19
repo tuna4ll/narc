@@ -29,6 +29,17 @@ Pablo rejects duplicate names, missing dependencies and dependency cycles.
 Services are loaded in filename order. Failed dependencies propagate failure,
 and respawning services use the global restart limit and delay.
 
+## Mount table
+
+Before loading services Pablo mounts the entries of `/etc/fstab`. Each line
+holds `source target type [options]`; `none` as the source mounts a virtual
+filesystem, `ro` mounts read-only and `nofail` turns a failed mount into a
+warning. Missing mount points are created.
+
+```
+/dev/vda /mnt ext2 rw,nofail
+```
+
 ## Global settings
 
 ```ini

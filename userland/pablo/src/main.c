@@ -1,5 +1,7 @@
 #include <pablo/config.h>
+#include <pablo/hostname.h>
 #include <pablo/log.h>
+#include <pablo/mounts.h>
 #include <pablo/supervisor.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -14,6 +16,8 @@ int main(int argc, char **argv, char **envp) {
     }
 
     fprintf(stderr, "[pablo] info: pablo %s starting\n", PABLO_VERSION);
+    pablo_set_hostname("/etc/hostname");
+    pablo_mount_table("/etc/fstab");
     struct pablo_config config;
     if (pablo_config_load(&config, "/etc/pablo.conf", "/etc/pablo/services") != 0) {
         pablo_log(PABLO_LOG_ERROR, "configuration rejected");
