@@ -83,3 +83,11 @@ int virtio_transfer(struct virtio_device *device, struct virtqueue *queue,
     queue->last_used++;
     return 0;
 }
+
+int virtio_probe(struct virtio_device *device, uint32_t type) {
+    switch (type) {
+    case VIRTIO_DEVICE_BLOCK: return virtio_block_attach(device);
+    case VIRTIO_DEVICE_INPUT: return virtio_input_attach(device);
+    }
+    return -1;
+}

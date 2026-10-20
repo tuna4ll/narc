@@ -9,6 +9,7 @@
 #define VIRTIO_STATUS_FAILED      128u
 #define VIRTIO_F_VERSION_1        (1ULL << 32)
 #define VIRTIO_DEVICE_BLOCK       2
+#define VIRTIO_DEVICE_INPUT       18
 #define VIRTQ_DESC_NEXT           1u
 #define VIRTQ_DESC_WRITE          2u
 
@@ -78,4 +79,5 @@ int virtio_transfer(struct virtio_device *device, struct virtqueue *queue,
 int virtio_probe(struct virtio_device *device, uint32_t type);
 void virtio_mmio_probe(uint64_t base, uint64_t stride, unsigned count);
 int virtio_block_attach(struct virtio_device *device);
+int virtio_input_attach(struct virtio_device *device);
 void *virtio_map(uint64_t phys, uint64_t length);

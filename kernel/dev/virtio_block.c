@@ -85,8 +85,3 @@ int virtio_block_attach(struct virtio_device *device) {
     block_register(&disk->block);
     return 0;
 }
-
-int virtio_probe(struct virtio_device *device, uint32_t type) {
-    if (type == VIRTIO_DEVICE_BLOCK) return virtio_block_attach(device);
-    return -1;
-}

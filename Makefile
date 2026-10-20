@@ -236,7 +236,7 @@ run run-serial: iso $(DISK)
 else ifeq ($(ARCH),aarch64)
 run run-serial: iso $(DISK) $(EDK2_PREPARED)
 	cp $(EDK2_DIR)/ovmf-vars-aarch64.fd $(BUILD)/ovmf-vars.fd
-	qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -device ramfb \
+	qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -device ramfb -device virtio-keyboard-device \
 		-drive if=pflash,unit=0,format=raw,file=$(EDK2_DIR)/ovmf-code-aarch64.fd,readonly=on \
 		-drive if=pflash,unit=1,format=raw,file=$(BUILD)/ovmf-vars.fd \
 		-drive file=$(DISK),if=none,format=raw,id=hd0 -global virtio-mmio.force-legacy=false \
@@ -246,7 +246,7 @@ run run-serial: iso $(DISK) $(EDK2_PREPARED)
 else
 run run-serial: iso $(DISK) $(EDK2_PREPARED)
 	cp $(EDK2_DIR)/ovmf-vars-riscv64.fd $(BUILD)/ovmf-vars.fd
-	qemu-system-riscv64 -M virt -cpu rv64 -m 256M -device ramfb \
+	qemu-system-riscv64 -M virt -cpu rv64 -m 256M -device ramfb -device virtio-keyboard-device \
 		-drive if=pflash,unit=0,format=raw,file=$(EDK2_DIR)/ovmf-code-riscv64.fd,readonly=on \
 		-drive if=pflash,unit=1,format=raw,file=$(BUILD)/ovmf-vars.fd \
 		-drive file=$(DISK),if=none,format=raw,id=hd0 -global virtio-mmio.force-legacy=false \

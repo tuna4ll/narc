@@ -92,6 +92,9 @@ void arch_probe_devices(void) {
     virtio_mmio_probe(0x0a000000ULL, 0x200, 32);
 }
 
+void arch_keyboard_init(void) {
+}
+
 void arch_halt(void) {
     for (;;) __asm__ volatile ("msr daifset, #0xf; wfi");
 }

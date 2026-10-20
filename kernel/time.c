@@ -1,3 +1,4 @@
+#include <kernel/keyboard.h>
 #include <kernel/sched.h>
 #include <kernel/spinlock.h>
 #include <kernel/task.h>
@@ -61,6 +62,7 @@ void time_tick(void) {
         if (!timer) break;
         timer->expire(timer);
     }
+    keyboard_poll();
     sched_tick();
 }
 

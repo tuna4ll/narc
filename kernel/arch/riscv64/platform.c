@@ -62,6 +62,9 @@ void arch_probe_devices(void) {
     virtio_mmio_probe(0x10001000ULL, 0x1000, 8);
 }
 
+void arch_keyboard_init(void) {
+}
+
 void arch_halt(void) {
     for (;;) __asm__ volatile ("csrci sstatus, 2; wfi");
 }

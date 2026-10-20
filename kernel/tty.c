@@ -1,6 +1,7 @@
 #include <kernel/arch.h>
 #include <kernel/console.h>
 #include <kernel/device.h>
+#include <kernel/keyboard.h>
 #include <kernel/mutex.h>
 #include <kernel/serial.h>
 #include <kernel/signal.h>
@@ -9,6 +10,7 @@
 #include <kernel/task.h>
 #include <kernel/time.h>
 #include <kernel/tty.h>
+#include <kernel/vfs.h>
 #include <kernel/uaccess.h>
 #include <kernel/wait.h>
 
@@ -67,6 +69,7 @@ void tty_init(void) {
     console.winsize.cols = console_cols();
     serial_rx_enable();
     arch_serial_irq_init();
+    keyboard_init();
 }
 
 static void output_raw(const char *data, size_t length) {
@@ -482,7 +485,10 @@ static const struct file_ops tty_ops = {
 
 struct open_file *tty_open(void) {
     struct open_file *open = file_alloc(&tty_ops, &console);
-    if (open) open->flags = VFS_OPEN_READ | VFS_OPEN_WRITE;
+    if (!open) return 0;
+    open->flags = VFS_OPEN_READ | VFS_OPEN_WRITE;
+    struct vnode *node;
+    if (vfs_lookup(vfs_root(), "/dev/console", &node) == 0) open->node = node;
     return open;
 }
 
