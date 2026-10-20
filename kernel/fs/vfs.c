@@ -1,6 +1,8 @@
 #include <kernel/heap.h>
+#include <kernel/mm.h>
 #include <kernel/mutex.h>
 #include <kernel/string.h>
+#include <kernel/time.h>
 #include <kernel/vfs.h>
 #include <narc/abi.h>
 
@@ -468,6 +470,40 @@ int vfs_truncate(struct vnode *node, uint64_t size) {
     int status = node->ops->truncate(node, size);
     mutex_unlock(&node->lock);
     return status;
+}
+
+int vfs_setattr(struct vnode *node, const struct vfs_attr *attr) {
+    if (read_only(node)) return -NARC_READ_ONLY_FS;
+    if (attr->mask & VFS_ATTR_SIZE) {
+        int status = vfs_truncate(node, attr->size);
+        if (status) return status;
+    }
+    if (!(attr->mask & ~VFS_ATTR_SIZE)) return 0;
+    int64_t now = time_realtime_ns() / (int64_t)NSEC_PER_SEC;
+    mutex_lock(&node->lock);
+    if (attr->mask & VFS_ATTR_MODE) node->mode = (node->mode & S_IFMT) | (attr->mode & 07777);
+    if ((attr->mask & (VFS_ATTR_UID | VFS_ATTR_GID)) && !(attr->mask & VFS_ATTR_MODE) &&
+        node->type == VFS_REG)
+        node->mode &= ~(uint32_t)06000;
+    if (attr->mask & VFS_ATTR_UID) node->uid = attr->uid;
+    if (attr->mask & VFS_ATTR_GID) node->gid = attr->gid;
+    if (attr->mask & VFS_ATTR_ATIME) node->atime = attr->atime;
+    if (attr->mask & VFS_ATTR_ATIME_NOW) node->atime = now;
+    if (attr->mask & VFS_ATTR_MTIME) node->mtime = attr->mtime;
+    if (attr->mask & VFS_ATTR_MTIME_NOW) node->mtime = now;
+    node->ctime = now;
+    int status = node->ops->write_attr ? node->ops->write_attr(node) : 0;
+    mutex_unlock(&node->lock);
+    return status;
+}
+
+int vfs_statfs(struct vnode *node, struct vfs_statfs *info) {
+    memset(info, 0, sizeof(*info));
+    info->block_size = PAGE_SIZE;
+    info->name_max = VFS_NAME_MAX;
+    struct mount *mount = node->mount;
+    if (!mount || !mount->fs->statfs) return 0;
+    return mount->fs->statfs(mount, info);
 }
 
 int vfs_readdir(struct vnode *dir, uint64_t *cookie, struct vfs_dirent *entry) {

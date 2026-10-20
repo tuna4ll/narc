@@ -24,6 +24,7 @@ uint64_t pmm_alloc_page(void);
 void pmm_free_page(uint64_t phys);
 void pmm_page_ref(uint64_t phys);
 unsigned pmm_page_refs(uint64_t phys);
+void pmm_stats(uint64_t *total, uint64_t *available);
 void *phys_to_virt(uint64_t phys);
 int vmm_space_create(struct address_space *space);
 int vmm_space_clone(struct address_space *dst, struct address_space *src);

@@ -52,6 +52,11 @@ enum narc_syscall {
     NARC_SYS_SYMLINK   = 0x0113,
     NARC_SYS_READLINK  = 0x0114,
     NARC_SYS_LINK      = 0x0115,
+    NARC_SYS_SET_ATTR  = 0x0116,
+    NARC_SYS_FILE_SET_ATTR = 0x0117,
+    NARC_SYS_SYNC      = 0x0118,
+    NARC_SYS_FS_INFO   = 0x0119,
+    NARC_SYS_FILE_FS_INFO = 0x011a,
 
     NARC_SYS_MAP       = 0x0200,
     NARC_SYS_UNMAP     = 0x0201,
@@ -309,6 +314,42 @@ typedef struct narc_file_info {
 } narc_file_info_t;
 
 #define NARC_STAT_NOFOLLOW 1u
+
+enum narc_attr_mask {
+    NARC_ATTR_MODE      = 1u << 0,
+    NARC_ATTR_UID       = 1u << 1,
+    NARC_ATTR_GID       = 1u << 2,
+    NARC_ATTR_SIZE      = 1u << 3,
+    NARC_ATTR_ATIME     = 1u << 4,
+    NARC_ATTR_MTIME     = 1u << 5,
+    NARC_ATTR_ATIME_NOW = 1u << 6,
+    NARC_ATTR_MTIME_NOW = 1u << 7,
+};
+
+typedef struct narc_file_attr {
+    uint32_t mask;
+    uint32_t mode;
+    uint32_t uid;
+    uint32_t gid;
+    uint64_t size;
+    int64_t atime;
+    int64_t mtime;
+} narc_file_attr_t;
+
+#define NARC_FS_TYPE_LENGTH 16
+
+typedef struct narc_fs_info {
+    uint64_t block_size;
+    uint64_t blocks;
+    uint64_t free_blocks;
+    uint64_t available_blocks;
+    uint64_t files;
+    uint64_t free_files;
+    uint64_t device;
+    uint32_t name_max;
+    uint32_t flags;
+    char type[NARC_FS_TYPE_LENGTH];
+} narc_fs_info_t;
 
 typedef struct narc_dir_entry {
     uint64_t inode;

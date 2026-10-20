@@ -34,6 +34,30 @@
 struct vnode;
 struct mount;
 
+#define VFS_ATTR_MODE      (1u << 0)
+#define VFS_ATTR_UID       (1u << 1)
+#define VFS_ATTR_GID       (1u << 2)
+#define VFS_ATTR_SIZE      (1u << 3)
+#define VFS_ATTR_ATIME     (1u << 4)
+#define VFS_ATTR_MTIME     (1u << 5)
+#define VFS_ATTR_ATIME_NOW (1u << 6)
+#define VFS_ATTR_MTIME_NOW (1u << 7)
+
+struct vfs_attr {
+    uint32_t mask;
+    uint32_t mode;
+    uint32_t uid, gid;
+    uint64_t size;
+    int64_t atime, mtime;
+};
+
+struct vfs_statfs {
+    uint64_t block_size;
+    uint64_t blocks, free_blocks, available_blocks;
+    uint64_t files, free_files;
+    uint32_t name_max;
+};
+
 struct vfs_dirent {
     uint64_t ino;
     uint8_t type;
@@ -54,6 +78,7 @@ struct vnode_ops {
     int (*symlink)(struct vnode *dir, const char *name, size_t length, const char *target);
     long (*readlink)(struct vnode *node, char *buffer, size_t length);
     int (*link)(struct vnode *dir, const char *name, size_t length, struct vnode *node);
+    int (*write_attr)(struct vnode *node);
     void (*release)(struct vnode *node);
 };
 
@@ -65,6 +90,7 @@ struct filesystem {
     int requires_device;
     int (*mount)(struct mount *mount, struct vnode *device);
     int (*unmount)(struct mount *mount);
+    int (*statfs)(struct mount *mount, struct vfs_statfs *info);
 };
 
 struct vnode {
@@ -122,6 +148,8 @@ long vfs_getcwd(struct vnode *dir, char *buffer, size_t size);
 long vfs_read(struct vnode *node, uint64_t offset, void *buffer, size_t length);
 long vfs_write(struct vnode *node, uint64_t offset, const void *buffer, size_t length);
 int vfs_truncate(struct vnode *node, uint64_t size);
+int vfs_setattr(struct vnode *node, const struct vfs_attr *attr);
+int vfs_statfs(struct vnode *node, struct vfs_statfs *info);
 int vfs_readdir(struct vnode *dir, uint64_t *cookie, struct vfs_dirent *entry);
 
 extern struct filesystem tmpfs_filesystem;

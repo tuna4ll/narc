@@ -104,14 +104,24 @@ int initramfs_unpack(struct vnode *root, const void *archive, uint64_t size) {
 
         uint32_t permissions = (uint32_t)(octal(header->mode, sizeof(header->mode)) & 07777);
         uint32_t mode;
+        char path[sizeof(header->prefix) + sizeof(header->name) + 2];
+        tar_path(header, path);
+        if (header->type == '1' || header->type == '2') {
+            char link[sizeof(header->link) + 1];
+            memcpy(link, header->link, sizeof(header->link));
+            link[sizeof(header->link)] = 0;
+            int status = header->type == '2' ? vfs_symlink(root, link, path)
+                                             : vfs_link(root, link, path);
+            if (status && status != -NARC_EXISTS) return status;
+            offset = next;
+            continue;
+        }
         if (header->type == '5') mode = S_IFDIR | permissions;
         else if (header->type == '0' || !header->type) mode = S_IFREG | permissions;
         else {
             offset = next;
             continue;
         }
-        char path[sizeof(header->prefix) + sizeof(header->name) + 2];
-        tar_path(header, path);
         struct vnode *node;
         int status = place(root, path, mode, &node);
         if (status) return status;

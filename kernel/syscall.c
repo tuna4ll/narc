@@ -373,6 +373,107 @@ static struct kernel_result handle_stat(uint64_t address, uint64_t length, uint6
     return result_ok(0);
 }
 
+static int copy_attr(struct vfs_attr *attr, uint64_t address) {
+    narc_file_attr_t source;
+    if (copy_from_user(&source, address, sizeof(source)) != 0) return -NARC_BAD_ADDRESS;
+    if (source.mask & ~(uint32_t)0xff) return -NARC_INVALID_ARGUMENT;
+    attr->mask = source.mask;
+    attr->mode = source.mode;
+    attr->uid = source.uid;
+    attr->gid = source.gid;
+    attr->size = source.size;
+    attr->atime = source.atime;
+    attr->mtime = source.mtime;
+    return 0;
+}
+
+static struct kernel_result handle_set_attr(uint64_t address, uint64_t length,
+                                            uint64_t attr_address, uint64_t flags) {
+    struct vfs_attr attr;
+    int result = copy_attr(&attr, attr_address);
+    if (result) return result_status(result);
+    char *path;
+    uint32_t status = copy_path(&path, address, length);
+    if (status != NARC_OK) return result_error(status);
+    struct vnode *node;
+    result = (flags & NARC_STAT_NOFOLLOW) ? vfs_lookup_nofollow(task_cwd(), path, &node)
+                                          : vfs_lookup(task_cwd(), path, &node);
+    kfree(path);
+    if (result) return result_status(result);
+    result = vfs_setattr(node, &attr);
+    vnode_put(node);
+    return result_status(result);
+}
+
+static struct kernel_result handle_file_set_attr(uint64_t fd, uint64_t attr_address) {
+    struct vfs_attr attr;
+    int result = copy_attr(&attr, attr_address);
+    if (result) return result_status(result);
+    struct open_file *open = fd_get(task_files(), (int)fd);
+    if (!open) return result_error(NARC_BAD_HANDLE);
+    if (!open->node) result = -NARC_INVALID_ARGUMENT;
+    else if ((attr.mask & VFS_ATTR_SIZE) && !(open->flags & VFS_OPEN_WRITE))
+        result = -NARC_INVALID_ARGUMENT;
+    else result = vfs_setattr(open->node, &attr);
+    file_put(open);
+    return result_status(result);
+}
+
+static struct kernel_result handle_sync(uint64_t fd) {
+    if ((int64_t)fd == -1) return result_ok(0);
+    struct open_file *open = fd_get(task_files(), (int)fd);
+    if (!open) return result_error(NARC_BAD_HANDLE);
+    file_put(open);
+    return result_ok(0);
+}
+
+static struct kernel_result copy_fs_info(struct vnode *node, uint64_t address) {
+    struct vfs_statfs source;
+    int result = vfs_statfs(node, &source);
+    if (result) return result_status(result);
+    narc_fs_info_t info;
+    memset(&info, 0, sizeof(info));
+    info.block_size = source.block_size;
+    info.blocks = source.blocks;
+    info.free_blocks = source.free_blocks;
+    info.available_blocks = source.available_blocks;
+    info.files = source.files;
+    info.free_files = source.free_files;
+    info.name_max = source.name_max;
+    if (node->mount) {
+        info.device = node->mount->id;
+        info.flags = (node->mount->flags & VFS_MOUNT_READONLY) ? NARC_MOUNT_READONLY : 0;
+        size_t name_length = strlen(node->mount->fs->name);
+        if (name_length >= sizeof(info.type)) name_length = sizeof(info.type) - 1;
+        memcpy(info.type, node->mount->fs->name, name_length);
+    }
+    if (copy_to_user(address, &info, sizeof(info)) != 0) return result_error(NARC_BAD_ADDRESS);
+    return result_ok(0);
+}
+
+static struct kernel_result handle_fs_info(uint64_t address, uint64_t length,
+                                           uint64_t info_address) {
+    char *path;
+    uint32_t status = copy_path(&path, address, length);
+    if (status != NARC_OK) return result_error(status);
+    struct vnode *node;
+    int result = vfs_lookup(task_cwd(), path, &node);
+    kfree(path);
+    if (result) return result_status(result);
+    struct kernel_result info = copy_fs_info(node, info_address);
+    vnode_put(node);
+    return info;
+}
+
+static struct kernel_result handle_file_fs_info(uint64_t fd, uint64_t info_address) {
+    struct open_file *open = fd_get(task_files(), (int)fd);
+    if (!open) return result_error(NARC_BAD_HANDLE);
+    struct kernel_result info = open->node ? copy_fs_info(open->node, info_address)
+                                           : result_error(NARC_INVALID_ARGUMENT);
+    file_put(open);
+    return info;
+}
+
 static struct kernel_result handle_read_dir(uint64_t fd, uint64_t address) {
     struct open_file *open = fd_get(task_files(), (int)fd);
     if (!open) return result_error(NARC_BAD_HANDLE);
@@ -701,6 +802,21 @@ static void dispatch(struct task_frame *frame, uint64_t id) {
         return;
     case NARC_SYS_STAT:
         return_result(frame, handle_stat(a1, a2, a3, arch_syscall_arg(frame, 3)));
+        return;
+    case NARC_SYS_SET_ATTR:
+        return_result(frame, handle_set_attr(a1, a2, a3, arch_syscall_arg(frame, 3)));
+        return;
+    case NARC_SYS_FILE_SET_ATTR:
+        return_result(frame, handle_file_set_attr(a1, a2));
+        return;
+    case NARC_SYS_SYNC:
+        return_result(frame, handle_sync(a1));
+        return;
+    case NARC_SYS_FS_INFO:
+        return_result(frame, handle_fs_info(a1, a2, a3));
+        return;
+    case NARC_SYS_FILE_FS_INFO:
+        return_result(frame, handle_file_fs_info(a1, a2));
         return;
     case NARC_SYS_MAP:
         return_result(frame, handle_map(a1, a2));

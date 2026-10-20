@@ -19,6 +19,20 @@ int getopt(int argc, char *const argv[], const char *options);
 #define SEEK_END 2
 #endif
 
+#define _SC_ARG_MAX         0
+#define _SC_CHILD_MAX       1
+#define _SC_CLK_TCK         2
+#define _SC_NGROUPS_MAX     3
+#define _SC_OPEN_MAX        4
+#define _SC_PAGESIZE        30
+#define _SC_PAGE_SIZE       _SC_PAGESIZE
+#define _SC_NPROCESSORS_CONF 83
+#define _SC_NPROCESSORS_ONLN 84
+#define _SC_PHYS_PAGES      85
+#define _SC_LOGIN_NAME_MAX  71
+#define _SC_HOST_NAME_MAX   180
+#define _SC_LINE_MAX        43
+
 #define F_OK 0
 #define X_OK 1
 #define W_OK 2
@@ -58,6 +72,21 @@ int execl(const char *path, const char *argument, ...);
 int execlp(const char *file, const char *argument, ...);
 int execle(const char *path, const char *argument, ...);
 int execve(const char *path, char *const argv[], char *const envp[]);
+int chown(const char *path, uid_t owner, gid_t group);
+int fchown(int fd, uid_t owner, gid_t group);
+int lchown(const char *path, uid_t owner, gid_t group);
+int fchownat(int dirfd, const char *path, uid_t owner, gid_t group, int flags);
+int truncate(const char *path, off_t length);
+int ftruncate(int fd, off_t length);
+void sync(void);
+int fsync(int fd);
+int fdatasync(int fd);
+char *ttyname(int fd);
+int ttyname_r(int fd, char *buffer, size_t size);
+char *getlogin(void);
+int getlogin_r(char *buffer, size_t size);
+long sysconf(int name);
+int getpagesize(void);
 int unlink(const char *path);
 int symlink(const char *target, const char *path);
 int link(const char *old_path, const char *new_path);

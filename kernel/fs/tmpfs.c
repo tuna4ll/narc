@@ -414,10 +414,21 @@ static int tmpfs_unmount(struct mount *mount) {
     return 0;
 }
 
+static int tmpfs_statfs(struct mount *mount, struct vfs_statfs *info) {
+    (void)mount;
+    uint64_t total, available;
+    pmm_stats(&total, &available);
+    info->block_size = PAGE_SIZE;
+    info->blocks = total;
+    info->free_blocks = info->available_blocks = available;
+    return 0;
+}
+
 struct filesystem tmpfs_filesystem = {
     .name = "tmpfs",
     .mount = tmpfs_mount,
     .unmount = tmpfs_unmount,
+    .statfs = tmpfs_statfs,
 };
 
 struct vnode *tmpfs_create_root(void) {

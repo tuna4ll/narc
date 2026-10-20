@@ -56,7 +56,16 @@ struct stat {
 #define st_mtime st_mtim.tv_sec
 #define st_ctime st_ctim.tv_sec
 
+#define UTIME_NOW  ((1l << 30) - 1l)
+#define UTIME_OMIT ((1l << 30) - 2l)
+
 int fstat(int fd, struct stat *buffer);
+int fstatat(int dirfd, const char *restrict path, struct stat *restrict buffer, int flags);
+int chmod(const char *path, mode_t mode);
+int fchmod(int fd, mode_t mode);
+int fchmodat(int dirfd, const char *path, mode_t mode, int flags);
+int utimensat(int dirfd, const char *path, const struct timespec times[2], int flags);
+int futimens(int fd, const struct timespec times[2]);
 int stat(const char *path, struct stat *buffer);
 int lstat(const char *path, struct stat *buffer);
 int mkdir(const char *path, mode_t mode);

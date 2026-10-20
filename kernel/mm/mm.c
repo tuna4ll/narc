@@ -19,6 +19,7 @@ static uint64_t region_index;
 static uint64_t next_phys;
 static uint64_t region_end;
 static uint64_t free_head;
+static uint64_t total_pages, used_pages;
 static struct spinlock pmm_lock = SPINLOCK_INIT;
 static uint16_t *page_refs;
 static uint64_t refs_base, refs_count;
@@ -69,7 +70,20 @@ void mm_init(struct limine_memmap_response *map, uint64_t hhdm_offset) {
     next_phys = 0;
     region_end = 0;
     free_head = 0;
+    total_pages = 0;
+    used_pages = 0;
+    for (uint64_t i = 0; i < map->entry_count; i++)
+        if (map->entries[i]->type == LIMINE_MEMMAP_USABLE)
+            total_pages += map->entries[i]->length / PAGE_SIZE;
     reserve_refs();
+    total_pages -= (reserved_end - reserved_base) / PAGE_SIZE;
+}
+
+void pmm_stats(uint64_t *total, uint64_t *available) {
+    unsigned long flags = spin_lock_irqsave(&pmm_lock);
+    *total = total_pages;
+    *available = total_pages > used_pages ? total_pages - used_pages : 0;
+    spin_unlock_irqrestore(&pmm_lock, flags);
 }
 
 void *phys_to_virt(uint64_t phys) {
@@ -108,6 +122,7 @@ uint64_t pmm_alloc_page(void) {
     uint64_t page = take_page();
     uint16_t *refs = page ? page_ref(page) : 0;
     if (refs) *refs = 1;
+    if (page) used_pages++;
     spin_unlock_irqrestore(&pmm_lock, flags);
     if (page) memset(phys_to_virt(page), 0, PAGE_SIZE);
     return page;
@@ -121,6 +136,7 @@ void pmm_free_page(uint64_t phys) {
         (*refs)--;
     } else {
         if (refs) *refs = 0;
+        used_pages--;
         *(uint64_t *)phys_to_virt(phys) = free_head;
         free_head = phys;
     }

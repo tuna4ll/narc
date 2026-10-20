@@ -14,6 +14,7 @@
 #define RO_COMPAT_SPARSE 0x0001
 #define RO_COMPAT_LARGE_FILE 0x0002
 #define FAST_SYMLINK_MAX 60
+#define EXT2_NAME_MAX 255
 
 struct ext2_super {
     uint32_t inodes_count, blocks_count, reserved_blocks, free_blocks, free_inodes;
@@ -80,6 +81,15 @@ static const struct vnode_ops ext2_ops;
 
 static struct ext2_node *enode(struct vnode *vnode) {
     return (struct ext2_node *)vnode;
+}
+
+static uint16_t load16(const uint8_t *bytes) {
+    return (uint16_t)(bytes[0] | bytes[1] << 8);
+}
+
+static void store16(uint8_t *bytes, uint16_t value) {
+    bytes[0] = (uint8_t)value;
+    bytes[1] = (uint8_t)(value >> 8);
 }
 
 static uint32_t now(void) {
@@ -153,6 +163,10 @@ static int write_inode(struct ext2_node *node) {
     struct vnode *v = &node->vnode;
     node->raw.mode = (uint16_t)v->mode;
     node->raw.links = (uint16_t)v->nlink;
+    node->raw.uid = (uint16_t)v->uid;
+    node->raw.gid = (uint16_t)v->gid;
+    store16(node->raw.os2 + 4, (uint16_t)(v->uid >> 16));
+    store16(node->raw.os2 + 6, (uint16_t)(v->gid >> 16));
     node->raw.size = (uint32_t)v->size;
     if (v->type == VFS_REG) node->raw.size_high = (uint32_t)(v->size >> 32);
     node->raw.atime = (uint32_t)v->atime;
@@ -376,8 +390,8 @@ static void fill_vnode(struct ext2_node *node) {
     vnode_init(v, node->fs->mount, &ext2_ops, raw->mode);
     v->ino = node->ino;
     v->nlink = raw->links;
-    v->uid = raw->uid;
-    v->gid = raw->gid;
+    v->uid = raw->uid | (uint32_t)load16(raw->os2 + 4) << 16;
+    v->gid = raw->gid | (uint32_t)load16(raw->os2 + 6) << 16;
     v->size = raw->size;
     if (v->type == VFS_REG && node->fs->large_file) v->size |= (uint64_t)raw->size_high << 32;
     v->atime = raw->atime;
@@ -963,6 +977,14 @@ static int ext2_link(struct vnode *dir, const char *name, size_t length, struct 
     return status;
 }
 
+static int ext2_write_attr(struct vnode *vnode) {
+    struct ext2_node *node = enode(vnode);
+    mutex_lock(&node->fs->lock);
+    int status = write_inode(node);
+    mutex_unlock(&node->fs->lock);
+    return status;
+}
+
 static void ext2_release(struct vnode *vnode) {
     struct ext2_node *node = enode(vnode);
     struct ext2_fs *fs = node->fs;
@@ -992,6 +1014,7 @@ static const struct vnode_ops ext2_ops = {
     .symlink = ext2_symlink,
     .readlink = ext2_readlink,
     .link = ext2_link,
+    .write_attr = ext2_write_attr,
     .release = ext2_release,
 };
 
@@ -1055,9 +1078,26 @@ static int ext2_unmount(struct mount *mount) {
     return 0;
 }
 
+static int ext2_statfs(struct mount *mount, struct vfs_statfs *info) {
+    struct ext2_fs *fs = mount->data;
+    mutex_lock(&fs->lock);
+    uint32_t overhead = fs->super.first_data_block;
+    info->block_size = fs->block_size;
+    info->blocks = fs->super.blocks_count - overhead;
+    info->free_blocks = fs->super.free_blocks;
+    info->available_blocks = fs->super.free_blocks > fs->super.reserved_blocks ?
+                             fs->super.free_blocks - fs->super.reserved_blocks : 0;
+    info->files = fs->super.inodes_count;
+    info->free_files = fs->super.free_inodes;
+    info->name_max = EXT2_NAME_MAX;
+    mutex_unlock(&fs->lock);
+    return 0;
+}
+
 struct filesystem ext2_filesystem = {
     .name = "ext2",
     .requires_device = 1,
     .mount = ext2_mount,
     .unmount = ext2_unmount,
+    .statfs = ext2_statfs,
 };

@@ -8,3 +8,4 @@ struct timeval {
 };
 
 int gettimeofday(struct timeval *value, void *zone);
+int utimes(const char *path, const struct timeval times[2]);

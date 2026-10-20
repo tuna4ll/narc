@@ -34,6 +34,12 @@ narc_result_t narc_seek(int fd, int64_t offset, uint32_t origin);
 narc_result_t narc_file_info(int fd, narc_file_info_t *info);
 narc_result_t narc_stat(const char *path, size_t path_length, narc_file_info_t *info,
                         uint32_t flags);
+narc_result_t narc_set_attr(const char *path, size_t path_length, const narc_file_attr_t *attr,
+                            uint32_t flags);
+narc_result_t narc_file_set_attr(int fd, const narc_file_attr_t *attr);
+narc_result_t narc_sync(int fd);
+narc_result_t narc_fs_info(const char *path, size_t path_length, narc_fs_info_t *info);
+narc_result_t narc_file_fs_info(int fd, narc_fs_info_t *info);
 narc_result_t narc_read_dir(int fd, narc_dir_entry_t *entry);
 narc_result_t narc_mkdir(const char *path, size_t path_length, uint32_t mode);
 narc_result_t narc_unlink(const char *path, size_t path_length);
