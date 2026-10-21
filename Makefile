@@ -14,6 +14,13 @@ PABLO_HEADERS := $(shell find userland/pablo/include -type f 2>/dev/null | sort)
 CAPOSH := $(BUILD)/userland/bin/caposh
 CAPOSH_C := $(shell find userland/caposh/src -name '*.c' 2>/dev/null | sort)
 CAPOSH_OBJ := $(patsubst userland/caposh/%.c,$(BUILD)/userland/caposh/%.o,$(CAPOSH_C))
+NARCUTILS := $(BUILD)/userland/narcutils
+NARCUTILS_LIB_C := $(shell find userland/narcutils/lib -name '*.c' 2>/dev/null | sort)
+NARCUTILS_LIB_OBJ := $(patsubst userland/narcutils/%.c,$(NARCUTILS)/%.o,$(NARCUTILS_LIB_C))
+NARCUTILS_LIB := $(NARCUTILS)/libnarcutils.a
+NARCUTILS_SRC := $(shell find userland/narcutils/src -maxdepth 1 -name '*.c' 2>/dev/null | sort)
+NARCUTILS_BIN := $(patsubst userland/narcutils/src/%.c,$(NARCUTILS)/bin/%,$(NARCUTILS_SRC))
+NARCUTILS_LINKS := [:test arch:uname
 INITRAMFS := $(BUILD)/initramfs.tar
 INITRAMFS_ROOT := $(BUILD)/initramfs_root
 USER_BASE := 0x400000
@@ -103,7 +110,7 @@ KERNEL_S := $(COMMON_KERNEL_S) $(ARCH_KERNEL_S)
 KERNEL_O := $(patsubst %.c,$(BUILD)/%.o,$(KERNEL_C)) \
             $(patsubst %.S,$(BUILD)/%.o,$(KERNEL_S))
 
-.PHONY: all kernel libnarc libc sysroot userland iso disk run run-serial clean distclean
+.PHONY: all kernel libnarc libc sysroot userland narcutils iso disk run run-serial clean distclean
 all: iso
 
 include recipes/limine/RECIPE
@@ -181,9 +188,25 @@ $(CAPOSH): $(CAPOSH_OBJ) $(SYSROOT_STAMP)
 	$(USER_CC) $(USER_CFLAGS) $(SYSROOT_LIB)/crt0.o $(SYSROOT_LIB)/crt1.o $(CAPOSH_OBJ) \
 		-L$(SYSROOT_LIB) -lc -lnarc -lgcc $(USER_LDFLAGS) -o $@
 
-userland: $(USER_APP) $(CAPOSH)
+$(NARCUTILS)/%.o: userland/narcutils/%.c $(SYSROOT_STAMP)
+	@mkdir -p $(dir $@)
+	$(USER_CC) $(USER_CFLAGS) $(DEPFLAGS) -I userland/narcutils/include -c $< -o $@
 
-$(INITRAMFS): $(USER_APP) $(CAPOSH) $(ROOTFS_FILES)
+$(NARCUTILS_LIB): $(NARCUTILS_LIB_OBJ)
+	$(USER_AR) rcs $@ $^
+
+$(NARCUTILS)/bin/%: $(NARCUTILS)/src/%.o $(NARCUTILS_LIB) $(SYSROOT_STAMP)
+	@mkdir -p $(dir $@)
+	$(USER_CC) $(USER_CFLAGS) $(SYSROOT_LIB)/crt0.o $(SYSROOT_LIB)/crt1.o $< $(NARCUTILS_LIB) \
+		-L$(SYSROOT_LIB) -lc -lnarc -lgcc $(USER_LDFLAGS) -o $@
+
+narcutils: $(NARCUTILS_BIN)
+
+.PRECIOUS: $(NARCUTILS)/src/%.o
+
+userland: $(USER_APP) $(CAPOSH) narcutils
+
+$(INITRAMFS): $(USER_APP) $(CAPOSH) $(NARCUTILS_BIN) $(ROOTFS_FILES)
 	rm -rf $(INITRAMFS_ROOT)
 	mkdir -p $(INITRAMFS_ROOT)/sbin $(INITRAMFS_ROOT)/bin
 	cp -R userland/rootfs/. $(INITRAMFS_ROOT)/
@@ -192,6 +215,8 @@ $(INITRAMFS): $(USER_APP) $(CAPOSH) $(ROOTFS_FILES)
 	cp $(USER_APP) $(INITRAMFS_ROOT)/bin/init
 	cp $(CAPOSH) $(INITRAMFS_ROOT)/bin/caposh
 	cp $(CAPOSH) $(INITRAMFS_ROOT)/bin/sh
+	$(if $(NARCUTILS_BIN),cp $(NARCUTILS_BIN) $(INITRAMFS_ROOT)/bin/)
+	$(foreach link,$(NARCUTILS_LINKS),$(if $(wildcard userland/narcutils/src/$(lastword $(subst :, ,$(link))).c),ln -sf $(lastword $(subst :, ,$(link))) $(INITRAMFS_ROOT)/bin/$(firstword $(subst :, ,$(link)));))
 	tar --format=ustar --owner=0 --group=0 --numeric-owner -cf $@ -C $(INITRAMFS_ROOT) .
 
 $(BUILD)/kernel/%.o: kernel/%.c
