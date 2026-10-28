@@ -6,6 +6,7 @@
 #include "io.h"
 #include "cpu.h"
 #include "terminal.h"
+#include "pit.h"
 
 /* stage2 kernel.bin'in ilk byte'ına atlıyor, linker.ld .text.entry'yi en başa
  * koyuyor. bu section'da kmain'den başka bir şey olmasın */
@@ -14,6 +15,7 @@ void kmain(void) {
     outb(0xE9, 'K');    /* debugcon'a "kernel'e geldik" */
 
     vga_kprint("Turkish OSDEV Community\n");
-
+    pit_init(100);
+    vga_kprint("PIT configured at 100HZ");
     khalt();
 }
