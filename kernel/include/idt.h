@@ -21,4 +21,5 @@ typedef struct {
 
 void idt_init(void);
 
+uint64_t timer_get_ticks(void);
 #endif

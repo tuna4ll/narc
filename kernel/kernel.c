@@ -12,7 +12,7 @@
 #include "terminal.h"
 #include "pit.h"
 #include "idt.h"
-
+#include "pic.h"
  
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(4);
@@ -29,8 +29,10 @@ static volatile uint64_t limine_requests_start_marker[] = LIMINE_REQUESTS_START_
 __attribute__((used, section(".limine_requests_end")))
 static volatile uint64_t limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
 
+#include "pic.h"
+
 void kmain(void) {
-    outb(0xE9, 'K');    /* debugcon'a "kernel'e geldik" */
+    outb(0xE9, 'K');
 
     if (!LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision)
         || framebuffer_request.response == NULL
@@ -41,16 +43,31 @@ void kmain(void) {
 
     terminal_init(framebuffer_request.response->framebuffers[0]);
 
-    kprint("NarcOs\n");
-    pit_init(100);
-    kprint("PIT 100HZ\n");
-    idt_init();
+    kprint("NarcOS\n");
 
+    idt_init();
+    pic_remap();
+
+    pit_init(100);
     kprint("Testing INT3...\n");
 
     __asm__ volatile ("int3");
-
     kprint("Interrupt returned!\n");
 
-    khalt();
+    kprint("Enabling interrupts...\n");
+    __asm__ volatile ("sti");
+
+    uint64_t last = 0;
+
+    for (;;) {
+    uint64_t now = timer_get_ticks();
+
+    if (now - last >= 100) {
+        last = now;
+        kprint("One second passed!\n");
+    }
+
+    __asm__ volatile ("hlt");
+    }
+
 }

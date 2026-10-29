@@ -1,6 +1,7 @@
 
 #include "idt.h"
 #include "terminal.h"
+#include "pic.h"
 
 static idt_entry_t idt[256];
 static idtr_t idtr;
@@ -28,6 +29,18 @@ static void breakpoint_handler(interrupt_frame_t *frame) {
     (void)frame;
     kprint("Breakpoint interrupt!\n");
 }
+
+static volatile uint64_t ticks = 0;
+
+__attribute__((interrupt))
+static void timer_handler(interrupt_frame_t *frame) {
+    (void)frame;
+
+    ticks++;
+
+    pic_send_eoi(0);
+}
+
 
 __attribute__((interrupt))
 static void page_fault_handler(
@@ -64,10 +77,17 @@ void idt_init(void) {
     idt_set_gate(3, (void *)breakpoint_handler);
     idt_set_gate(14, (void *)page_fault_handler);
 
+    idt_set_gate(32, (void *)timer_handler);
+
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (uint64_t)&idt;
 
     __asm__ volatile ("lidt %0" : : "m"(idtr) : "memory");
 
     kprint("IDT initialized!\n");
+}
+
+
+uint64_t timer_get_ticks(void) {
+    return ticks;
 }
