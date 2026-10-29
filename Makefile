@@ -15,7 +15,7 @@ BOOT_INCLUDES := $(wildcard boot/include/*.inc)
 # -mno-red-zone: interrupt geldiğinde red zone ezilir, kernel'de kapalı olmalı
 # -fno-stack-protector: __stack_chk_fail libc'de, bizde yok
 # -MMD -MP: header değişince ilgili .c'ler yeniden derlensin
-CFLAGS := -m64 -std=c11 -O2 -Wall -Wextra -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -mno-red-zone -mcmodel=small
+CFLAGS := -m64 -std=c11 -O2 -Wall -Wextra -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -mno-red-zone -mgeneral-regs-only -mcmodel=small
 CFLAGS += -Ikernel/include -MMD -MP
 
 # kernel/ altındaki bütün .c'ler otomatik

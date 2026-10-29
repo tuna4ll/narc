@@ -1,29 +1,3 @@
-# ASM Bootloader + C Kernel Template (x86_64)
+# Narc
 
-Legacy BIOS için minimal bir boot template'i. Bootloader NASM ile, kernel C ile yazıldı. GRUB ya da Limine kullanılmıyor.
-
-<img width="719" height="455" alt="image" src="https://github.com/user-attachments/assets/27e6cc40-de6b-4f3c-90e9-99b50076edfa" />
-
-
-## Gereksinimler
-
-```sh
-# Arch
-sudo pacman -S --needed base-devel nasm binutils qemu-desktop
-# Debian / Ubuntu
-sudo apt install build-essential nasm qemu-system-x86
-# Fedora
-sudo dnf install make gcc binutils nasm qemu-system-x86
-```
-
-## Kullanım
-
-```sh
-make run
-```
-
-Terminalde `ABCDK` görürsen kernel'e ulaşılmış demektir. Harflerin anlamı `boot/stage2.asm` dosyasının başında yazıyor.
-
-## Lisans
-
-[MIT](LICENSE) © Türk OSDev Topluluğu
+<p align="center"><img src="assets/narcito.png" alt="narcito" width="256"></p>
