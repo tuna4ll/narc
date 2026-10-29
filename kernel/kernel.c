@@ -1,12 +1,7 @@
-/*
- * kmain'e geldiğimizde: 64-bit long mode, ring 0, interrupt kapalı ve IDT yok,
- * GDT/paging/stack Limine'in, ekran grafik framebuffer, libc yok.
- */
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <limine.h>
-
+#include "keyboard.h"
 #include "io.h"
 #include "cpu.h"
 #include "terminal.h"
@@ -43,10 +38,25 @@ void kmain(void) {
 
     terminal_init(framebuffer_request.response->framebuffers[0]);
 
-    kprint("NarcOS\n");
+    kprint("Narc\n");
+
+    kprint("      %%%%%@%##     \n");
+    kprint(" *+   %%%@%#@%#%    \n");
+    kprint(" +-=  @%++++*%%@    \n");
+    kprint(" #*#@ @*#%=*+*@@    \n");
+    kprint("   #*###****=-+%   \n") ;
+    kprint("  %++==:=**+-:-.-+\n")  ;
+    kprint("   -::-:-=:.-----:*\n") ;
+    kprint("  %%*=----..-**+.=*\n") ;
+    kprint(" @###*:-..:-=*##-+%\n") ;
+    kprint("  ###*+==*:-**#*#%\n")  ;
+    kprint("   %##@    %####\n\n\n")    ;
 
     idt_init();
     pic_remap();
+
+    pic_clear_mask(0); // PIT
+    pic_clear_mask(1); // Keyboard
 
     pit_init(100);
     kprint("Testing INT3...\n");
@@ -57,17 +67,24 @@ void kmain(void) {
     kprint("Enabling interrupts...\n");
     __asm__ volatile ("sti");
 
-    uint64_t last = 0;
+    uint8_t previous = 0;
 
     for (;;) {
-    uint64_t now = timer_get_ticks();
+        uint8_t current = keyboard_get_last_scancode();
 
-    if (now - last >= 100) {
-        last = now;
-        kprint("One second passed!\n");
-    }
+        if (current != previous) {
+            previous = current;
 
-    __asm__ volatile ("hlt");
+            if (current == 0x31) {
+                kprint("N pressed (shout out to narcito)\n");
+            }
+
+            if (current == 0xB1) {
+                kprint("N releasd\n");
+            }
+        }
+
+        __asm__ volatile ("hlt");
     }
 
 }

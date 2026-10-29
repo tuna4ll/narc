@@ -2,6 +2,7 @@
 #include "idt.h"
 #include "terminal.h"
 #include "pic.h"
+#include "keyboard.h"
 
 static idt_entry_t idt[256];
 static idtr_t idtr;
@@ -13,6 +14,13 @@ typedef struct {
     uint64_t rsp;
     uint64_t ss;
 } interrupt_frame_t;
+
+__attribute__((interrupt))
+static void keyboard_handler(interrupt_frame_t *frame) {
+    (void)frame;
+
+    keyboard_handle_irq();
+}
 
 __attribute__((interrupt))
 static void divide_handler(interrupt_frame_t *frame) {
@@ -78,6 +86,7 @@ void idt_init(void) {
     idt_set_gate(14, (void *)page_fault_handler);
 
     idt_set_gate(32, (void *)timer_handler);
+    idt_set_gate(33, (void *)keyboard_handler);
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (uint64_t)&idt;

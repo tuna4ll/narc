@@ -37,10 +37,10 @@ void terminal_putchar(char c) {
     }
 
     /* boşluklar siyah kalsın, gerisi rastgele zemin */
-    if (c == ' ' || c == '\n') {
-        flanterm_set_text_bg(ft_ctx, 0, false);
-    } else {
+    if (c == 'N' || c == 'n') {
         flanterm_set_text_bg(ft_ctx, randomColor(), false);
+    } else {
+        flanterm_set_text_bg(ft_ctx, 0, false);
     }
 
     flanterm_set_text_fg(ft_ctx, 7, true);
