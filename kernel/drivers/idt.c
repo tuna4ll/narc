@@ -16,7 +16,7 @@ typedef struct {
 __attribute__((interrupt))
 static void divide_handler(interrupt_frame_t *frame) {
     (void)frame;
-    vga_kprint("Division Error!\n");
+    kprint("Division Error!\n");
 
     for (;;) {
         __asm__ volatile ("cli; hlt");
@@ -26,7 +26,7 @@ static void divide_handler(interrupt_frame_t *frame) {
 __attribute__((interrupt))
 static void breakpoint_handler(interrupt_frame_t *frame) {
     (void)frame;
-    vga_kprint("Breakpoint interrupt!\n");
+    kprint("Breakpoint interrupt!\n");
 }
 
 __attribute__((interrupt))
@@ -37,7 +37,7 @@ static void page_fault_handler(
     (void)frame;
     (void)error_code;
 
-    vga_kprint("Page Fault!\n");
+    kprint("Page Fault!\n");
 
     for (;;) {
         __asm__ volatile ("cli; hlt");
@@ -69,5 +69,5 @@ void idt_init(void) {
 
     __asm__ volatile ("lidt %0" : : "m"(idtr) : "memory");
 
-    vga_kprint("IDT initialized!\n");
+    kprint("IDT initialized!\n");
 }

@@ -1,4 +1,6 @@
 -Ikernel/include
--std=c11
+-Ibuild/limine-12.9.6/limine-protocol/include
+-Ibuild/flanterm/src
+-std=gnu11
 -ffreestanding
 -m64
