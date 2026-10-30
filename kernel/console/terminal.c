@@ -36,7 +36,6 @@ void terminal_putchar(char c) {
         return;
     }
 
-    /* boşluklar siyah kalsın, gerisi rastgele zemin */
     if (c == 'N' || c == 'n') {
         flanterm_set_text_bg(ft_ctx, randomColor(), false);
     } else {
