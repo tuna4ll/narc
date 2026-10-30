@@ -3,12 +3,14 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <limine.h>
+
+#include "boot.h"
 
 #define PAGE_SIZE 4096
 
 bool pmm_init(
-    struct limine_memmap_response *memmap,
+    const struct mem_region *regions,
+    uint64_t region_count,
     uint64_t hhdm_offset
 );
 
@@ -19,4 +21,4 @@ uint64_t pmm_get_total_pages(void);
 uint64_t pmm_get_free_pages(void);
 uint64_t pmm_get_usable_bytes(void);
 
-#endif
+#endif /* PMM_H */

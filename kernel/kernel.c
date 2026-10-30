@@ -1,7 +1,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <limine.h>
 
 #include "keyboard.h"
 #include "io.h"
@@ -11,59 +10,25 @@
 #include "idt.h"
 #include "pic.h"
 #include "pmm.h"
-
-__attribute__((used, section(".limine_requests")))
-static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(4);
-
-__attribute__((used, section(".limine_requests")))
-static volatile struct limine_framebuffer_request framebuffer_request = {
-    .id = LIMINE_FRAMEBUFFER_REQUEST_ID,
-    .revision = 0
-};
-
-__attribute__((used, section(".limine_requests")))
-static volatile struct limine_memmap_request memmap_request = {
-    .id = LIMINE_MEMMAP_REQUEST_ID,
-    .revision = 0
-};
-
-__attribute__((used, section(".limine_requests")))
-static volatile struct limine_hhdm_request hhdm_request = {
-    .id = LIMINE_HHDM_REQUEST_ID,
-    .revision = 0
-};
-
-__attribute__((used, section(".limine_requests_start")))
-static volatile uint64_t limine_requests_start_marker[] = LIMINE_REQUESTS_START_MARKER;
-
-__attribute__((used, section(".limine_requests_end")))
-static volatile uint64_t limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
+#include "boot.h"
 
 void kmain(void) {
     outb(0xE9, 'K');
 
-    if (!LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision)
-        || framebuffer_request.response == NULL
-        || framebuffer_request.response->framebuffer_count < 1) {
+    struct boot_info boot;
+
+    if (!boot_init(&boot)) {
         outb(0xE9, 'E');
         khalt();
     }
 
-    terminal_init(framebuffer_request.response->framebuffers[0]);
+    terminal_init(&boot.framebuffer);
     kprint("Hello World\n");
-    if (memmap_request.response == NULL) {
-        kprint("Memory map unavailable!\n");
-        khalt();
-    }
-
-    if (hhdm_request.response == NULL) {
-        kprint("HHDM unavailable!\n");
-        khalt();
-    }
 
     if (!pmm_init(
-        memmap_request.response,
-        hhdm_request.response->offset
+        boot.memmap,
+        boot.memmap_count,
+        boot.hhdm_offset
     )) {
         kprint("PMM initialization failed!\n");
         khalt();
@@ -80,7 +45,7 @@ void kmain(void) {
 
     kprint("PMM: physical page allocated!\n");
 
-    uint64_t hhdm = hhdm_request.response->offset;
+    uint64_t hhdm = boot.hhdm_offset;
 
     volatile uint8_t *memory =
         (volatile uint8_t *)(uintptr_t)(page + hhdm);

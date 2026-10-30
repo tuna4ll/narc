@@ -38,25 +38,52 @@ static bool pmm_usable_page(uint64_t page) {
     return page < tracked_pages;
 }
 
+/* bölgenin içinde kalan tam sayfaları verir, hizalama bootloader'a bırakılmaz */
+static bool region_pages(
+    const struct mem_region *region,
+    uint64_t *first_page,
+    uint64_t *page_count
+) {
+    uint64_t start = region->base;
+    uint64_t end = region->base + region->length;
+
+    if (start % PAGE_SIZE != 0) {
+        if (start > UINT64_MAX - PAGE_SIZE) {
+            return false;
+        }
+        start += PAGE_SIZE - start % PAGE_SIZE;
+    }
+
+    end -= end % PAGE_SIZE;
+
+    if (end <= start) {
+        return false;
+    }
+
+    *first_page = start / PAGE_SIZE;
+    *page_count = (end - start) / PAGE_SIZE;
+    return true;
+}
+
 bool pmm_init(
-    struct limine_memmap_response *memmap,
+    const struct mem_region *regions,
+    uint64_t region_count,
     uint64_t hhdm_offset
 ) {
-    if (initialized || memmap == NULL) {
+    if (initialized || regions == NULL) {
         return false;
     }
 
     uint64_t highest_address = 0;
 
-    for (uint64_t i = 0; i < memmap->entry_count; i++) {
-        struct limine_memmap_entry *entry = memmap->entries[i];
+    for (uint64_t i = 0; i < region_count; i++) {
+        const struct mem_region *region = &regions[i];
 
-        if (entry == NULL ||
-            entry->length > UINT64_MAX - entry->base) {
+        if (region->length > UINT64_MAX - region->base) {
             return false;
         }
 
-        uint64_t end = entry->base + entry->length;
+        uint64_t end = region->base + region->length;
 
         if (end > highest_address) {
             highest_address = end;
@@ -86,19 +113,18 @@ bool pmm_init(
     bitmap_pages =
         (bitmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
 
-    uint64_t bitmap_size = bitmap_pages * PAGE_SIZE;
-
     bool found = false;
 
-    for (uint64_t i = 0; i < memmap->entry_count; i++) {
-        struct limine_memmap_entry *entry = memmap->entries[i];
+    for (uint64_t i = 0; i < region_count; i++) {
+        uint64_t first_page, page_count;
 
-        if (entry->type != LIMINE_MEMMAP_USABLE) {
+        if (regions[i].type != MEM_REGION_USABLE ||
+            !region_pages(&regions[i], &first_page, &page_count)) {
             continue;
         }
 
-        if (entry->length >= bitmap_size) {
-            bitmap_phys = entry->base;
+        if (page_count >= bitmap_pages) {
+            bitmap_phys = first_page * PAGE_SIZE;
             found = true;
             break;
         }
@@ -116,22 +142,21 @@ bool pmm_init(
         bitmap[i] = 0xFF;
     }
 
-    for (uint64_t i = 0; i < memmap->entry_count; i++) {
-        struct limine_memmap_entry *entry = memmap->entries[i];
+    for (uint64_t i = 0; i < region_count; i++) {
+        uint64_t first_page, page_count;
 
-        if (entry->type != LIMINE_MEMMAP_USABLE) {
+        if (regions[i].type != MEM_REGION_USABLE ||
+            !region_pages(&regions[i], &first_page, &page_count)) {
             continue;
         }
 
-        usable_bytes += entry->length;
-
-        uint64_t start_page = entry->base / PAGE_SIZE;
-        uint64_t page_count = entry->length / PAGE_SIZE;
+        usable_bytes += page_count * PAGE_SIZE;
 
         for (uint64_t j = 0; j < page_count; j++) {
-            uint64_t page = start_page + j;
+            uint64_t page = first_page + j;
 
-            if (page < tracked_pages) {
+            /* çakışan bölge gelirse aynı sayfayı iki kez saymayalım */
+            if (page < tracked_pages && bitmap_test(page)) {
                 bitmap_clear(page);
                 total_pages++;
                 free_pages++;

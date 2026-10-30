@@ -13,7 +13,7 @@ static size_t randomColor(void) {
     return krand() % 8;
 }
 
-void terminal_init(struct limine_framebuffer *fb) {
+void terminal_init(const struct boot_framebuffer *fb) {
     ft_ctx = flanterm_fb_init(
         NULL, NULL,
         fb->address, fb->width, fb->height, fb->pitch,
