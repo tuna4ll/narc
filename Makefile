@@ -67,6 +67,8 @@ $(BUILD)/kernel/%.o: kernel/%.c | $(DEPS_STAMPS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/kernel/console/wallpaper.o: assets/narcito_whitehouse.rgb
+
 $(FLANTERM_SRCS): | $(FLANTERM_DIR)/.git
 
 $(BUILD)/flanterm-obj/%.o: $(FLANTERM_DIR)/src/%.c | $(DEPS_STAMPS)
