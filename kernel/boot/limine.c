@@ -28,6 +28,12 @@ static volatile struct limine_hhdm_request hhdm_request = {
     .revision = 0
 };
 
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_executable_address_request kernel_address_request = {
+    .id = LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID,
+    .revision = 0
+};
+
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t limine_requests_start_marker[] = LIMINE_REQUESTS_START_MARKER;
 
@@ -45,6 +51,7 @@ static enum mem_region_type convert_type(uint64_t type) {
     case LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE: return MEM_REGION_BOOTLOADER_RECLAIMABLE;
     case LIMINE_MEMMAP_EXECUTABLE_AND_MODULES: return MEM_REGION_KERNEL;
     case LIMINE_MEMMAP_FRAMEBUFFER:            return MEM_REGION_FRAMEBUFFER;
+    case LIMINE_MEMMAP_RESERVED_MAPPED:        return MEM_REGION_RESERVED_MAPPED;
     default:                                   return MEM_REGION_RESERVED;
     }
 }
@@ -54,7 +61,8 @@ bool boot_init(struct boot_info *info) {
         || framebuffer_request.response == NULL
         || framebuffer_request.response->framebuffer_count < 1
         || memmap_request.response == NULL
-        || hhdm_request.response == NULL) {
+        || hhdm_request.response == NULL
+        || kernel_address_request.response == NULL) {
         return false;
     }
 
@@ -81,6 +89,8 @@ bool boot_init(struct boot_info *info) {
     info->memmap = regions;
     info->memmap_count = memmap->entry_count;
     info->hhdm_offset = hhdm_request.response->offset;
+    info->kernel_phys_base = kernel_address_request.response->physical_base;
+    info->kernel_virt_base = kernel_address_request.response->virtual_base;
     info->framebuffer = (struct boot_framebuffer){
         .address = fb->address,
         .width = fb->width,

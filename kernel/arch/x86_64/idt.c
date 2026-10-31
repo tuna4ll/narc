@@ -55,10 +55,17 @@ static void page_fault_handler(
     interrupt_frame_t *frame,
     uint64_t error_code
 ) {
-    (void)frame;
-    (void)error_code;
+    uint64_t cr2;
+    __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
 
-    kprint("Page Fault!\n");
+    kprint("\nPage Fault!\n");
+    kprint("  address: ");
+    kprint_hex(cr2);
+    kprint("\n  error:   ");
+    kprint_hex(error_code);
+    kprint("\n  rip:     ");
+    kprint_hex(frame->rip);
+    kprint("\n");
 
     for (;;) {
         __asm__ volatile ("cli; hlt");

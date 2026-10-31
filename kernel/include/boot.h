@@ -13,6 +13,7 @@ enum mem_region_type {
     MEM_REGION_BOOTLOADER_RECLAIMABLE,
     MEM_REGION_KERNEL,
     MEM_REGION_FRAMEBUFFER,
+    MEM_REGION_RESERVED_MAPPED,
 };
 
 struct mem_region {
@@ -39,6 +40,8 @@ struct boot_info {
     const struct mem_region *memmap;
     uint64_t memmap_count;
     uint64_t hhdm_offset;
+    uint64_t kernel_phys_base;
+    uint64_t kernel_virt_base;
     struct boot_framebuffer framebuffer;
 };
 
