@@ -13,6 +13,7 @@
 #include "boot.h"
 #include "vmm.h"
 #include "heap.h"
+#include "gdt.h"
 #include "random.h"
 
 static int not_heap;
@@ -161,6 +162,19 @@ void kmain(void) {
     kprint(" @###*:-..:-=*##-+%\n") ;
     kprint("  ###*+==*:-**#*#%\n")  ;
     kprint("   %##@    %####\n\n\n")    ;
+
+    uint16_t old_cs;
+    __asm__ volatile ("mov %%cs, %0" : "=r"(old_cs));
+
+    gdt_init();
+
+    uint16_t new_cs;
+    __asm__ volatile ("mov %%cs, %0" : "=r"(new_cs));
+    kprint("CS before: ");
+    kprint_hex(old_cs);
+    kprint(" CS after: ");
+    kprint_hex(new_cs);
+    kprint("\n");
 
     idt_init();
     pic_remap();
