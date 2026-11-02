@@ -73,7 +73,7 @@ $(FLANTERM_SRCS): | $(FLANTERM_DIR)/.git
 
 $(BUILD)/flanterm-obj/%.o: $(FLANTERM_DIR)/src/%.c | $(DEPS_STAMPS)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -w -c $< -o $@
+	$(CC) $(CFLAGS) -DFLANTERM_FB_DISABLE_BUMP_ALLOC -w -c $< -o $@
 
 $(BUILD)/kernel.elf: $(KERNEL_OBJS) $(FLANTERM_OBJS) kernel/linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(KERNEL_OBJS) $(FLANTERM_OBJS)

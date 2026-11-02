@@ -8,6 +8,7 @@
 #include "terminal.h"
 #include "random.h"
 #include "wallpaper.h"
+#include "heap.h"
 
 static struct flanterm_context *ft_ctx = NULL;
 
@@ -15,39 +16,23 @@ static size_t randomColor(void) {
     return krand() % 8;
 }
 
-#define CANVAS_MAX_WIDTH  1920
-#define CANVAS_MAX_HEIGHT 1080
-#define TERMINAL_ARENA_SIZE (10 * 1024 * 1024)
-
-static uint32_t canvas[CANVAS_MAX_WIDTH * CANVAS_MAX_HEIGHT];
-
-static uint8_t terminal_arena[TERMINAL_ARENA_SIZE];
-static size_t terminal_arena_used = 0;
-
 static void *terminal_malloc(size_t size) {
-    size = (size + 15) & ~(size_t)15;
-
-    if (size > TERMINAL_ARENA_SIZE - terminal_arena_used)
-        return NULL;
-
-    void *ptr = &terminal_arena[terminal_arena_used];
-    terminal_arena_used += size;
-    return ptr;
+    return kmalloc(size);
 }
 
 static void terminal_free(void *ptr, size_t size) {
-    (void)ptr;
     (void)size;
+    kfree(ptr);
 }
 
 void terminal_init(const struct boot_framebuffer *fb) {
     if (fb == NULL || fb->width == 0 || fb->height == 0)
         return;
 
-    uint32_t *bg = NULL;
-    if (fb->width <= CANVAS_MAX_WIDTH && fb->height <= CANVAS_MAX_HEIGHT) {
-        if (wallpaper_render(canvas, fb->width, fb->height))
-            bg = canvas;
+    uint32_t *canvas = kmalloc(fb->width * fb->height * sizeof(uint32_t));
+    if (canvas && !wallpaper_render(canvas, fb->width, fb->height)) {
+        kfree(canvas);
+        canvas = NULL;
     }
 
     ft_ctx = flanterm_fb_init(
@@ -57,7 +42,7 @@ void terminal_init(const struct boot_framebuffer *fb) {
         fb->red_mask_size, fb->red_mask_shift,
         fb->green_mask_size, fb->green_mask_shift,
         fb->blue_mask_size, fb->blue_mask_shift,
-        bg,
+        canvas,
         NULL, NULL,
         NULL, NULL,
         NULL, NULL,
@@ -66,6 +51,8 @@ void terminal_init(const struct boot_framebuffer *fb) {
         0,
         FLANTERM_FB_ROTATE_0
     );
+
+    kfree(canvas);
 }
 
 void terminal_putchar(char c) {
