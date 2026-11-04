@@ -45,3 +45,11 @@ void gdt_init(void) {
 
     kprint("GDT initialized!\n");
 }
+
+void gdt_set_tss(uint64_t base, uint32_t limit) {
+    gdt_set_entry(5, (uint32_t)base, limit, 0x89, 0x00);
+
+    uint32_t *high = (uint32_t *)&gdt[6];
+    high[0] = base >> 32;
+    high[1] = 0;
+}

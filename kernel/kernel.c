@@ -14,6 +14,7 @@
 #include "vmm.h"
 #include "heap.h"
 #include "gdt.h"
+#include "tss.h"
 #include "random.h"
 
 static int not_heap;
@@ -175,6 +176,8 @@ void kmain(void) {
     kprint(" CS after: ");
     kprint_hex(new_cs);
     kprint("\n");
+
+    tss_init();
 
     idt_init();
     pic_remap();

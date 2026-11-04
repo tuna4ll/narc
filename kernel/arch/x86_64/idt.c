@@ -72,6 +72,30 @@ static void page_fault_handler(
     }
 }
 
+__attribute__((interrupt))
+static void double_fault_handler(
+    interrupt_frame_t *frame,
+    uint64_t error_code
+) {
+    (void)error_code;
+
+    uint64_t rsp;
+    __asm__ volatile ("mov %%rsp, %0" : "=r"(rsp));
+
+    kprint("\nDouble Fault!\n");
+    kprint("  rip: ");
+    kprint_hex(frame->rip);
+    kprint("\n  rsp when it happened: ");
+    kprint_hex(frame->rsp);
+    kprint("\n  rsp in handler:       ");
+    kprint_hex(rsp);
+    kprint("\n");
+
+    for (;;) {
+        __asm__ volatile ("cli; hlt");
+    }
+}
+
 static void idt_set_gate(uint8_t vector, void *handler) {
     uint64_t addr = (uint64_t)handler;
 
@@ -90,6 +114,8 @@ static void idt_set_gate(uint8_t vector, void *handler) {
 void idt_init(void) {
     idt_set_gate(0, (void *)divide_handler);
     idt_set_gate(3, (void *)breakpoint_handler);
+    idt_set_gate(8, (void *)double_fault_handler);
+    idt[8].ist = 1;
     idt_set_gate(14, (void *)page_fault_handler);
 
     idt_set_gate(32, (void *)timer_handler);
