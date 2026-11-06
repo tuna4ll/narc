@@ -4,6 +4,8 @@
 #include "pic.h"
 #include "keyboard.h"
 
+extern void syscall_entry(void);
+
 static idt_entry_t idt[256];
 static idtr_t idtr;
 
@@ -120,6 +122,9 @@ void idt_init(void) {
 
     idt_set_gate(32, (void *)timer_handler);
     idt_set_gate(33, (void *)keyboard_handler);
+
+    idt_set_gate(0x80, (void *)syscall_entry);
+    idt[0x80].type_attr = 0xEE;
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (uint64_t)&idt;

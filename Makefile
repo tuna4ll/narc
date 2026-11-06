@@ -38,6 +38,13 @@ KERNEL_OBJS := $(patsubst kernel/%.c,$(BUILD)/kernel/%.o,$(KERNEL_SRCS))
 FLANTERM_SRCS := $(FLANTERM_DIR)/src/flanterm.c $(FLANTERM_DIR)/src/flanterm_backends/fb.c
 FLANTERM_OBJS := $(patsubst $(FLANTERM_DIR)/src/%.c,$(BUILD)/flanterm-obj/%.o,$(FLANTERM_SRCS))
 
+# userspace programı, kernel'den ayrı derlenip düz binary yapılıyor
+# -mgeneral-regs-only: limine SSE'yi açmıyor, user kodu da SSE kullanmasın
+USER_CFLAGS := -m64 -std=gnu11 -O2 -Wall -Wextra -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -mgeneral-regs-only -fno-tree-loop-distribute-patterns
+USER_SRCS := user/libc.c user/hello.c
+USER_OBJS := $(patsubst user/%.c,$(BUILD)/user/%.o,$(USER_SRCS))
+USER_BIN := $(BUILD)/user/hello.bin
+
 ISO := $(BUILD)/narc.iso
 ISO_ROOT := $(BUILD)/iso_root
 
@@ -68,6 +75,19 @@ $(BUILD)/kernel/%.o: kernel/%.c | $(DEPS_STAMPS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/kernel/console/wallpaper.o: assets/narcito_whitehouse.rgb
+
+$(BUILD)/user/%.o: user/%.c user/libc.h
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD)/user/hello.elf: $(USER_OBJS) user/linker.ld
+	$(LD) -m elf_x86_64 -nostdlib -static -T user/linker.ld -o $@ $(USER_OBJS)
+
+$(USER_BIN): $(BUILD)/user/hello.elf
+	objcopy -O binary $< $@
+
+# usermode.c hello.bin'i .incbin ile gömüyor
+$(BUILD)/kernel/user/usermode.o: $(USER_BIN)
 
 $(FLANTERM_SRCS): | $(FLANTERM_DIR)/.git
 
@@ -108,7 +128,7 @@ run-uefi: all
 
 # clone'lanan bağımlılıklar kalıyor, her seferinde indirmesin
 clean:
-	rm -rf $(BUILD)/kernel $(BUILD)/flanterm-obj $(BUILD)/kernel.elf $(ISO_ROOT) $(ISO)
+	rm -rf $(BUILD)/kernel $(BUILD)/flanterm-obj $(BUILD)/user $(BUILD)/kernel.elf $(ISO_ROOT) $(ISO)
 
 distclean:
 	rm -rf $(BUILD)

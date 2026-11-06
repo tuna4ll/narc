@@ -15,6 +15,8 @@
 #include "heap.h"
 #include "gdt.h"
 #include "tss.h"
+#include "kernel.h"
+#include "usermode.h"
 #include "random.h"
 
 static int not_heap;
@@ -340,6 +342,14 @@ void kmain(void) {
     kprint(" blocks "); kprint_dec(st.blocks); kprint("\n");
     kprint("HEAP: pmm free pages before "); kprint_dec(pmm_before);
     kprint(" after "); kprint_dec(pmm_get_free_pages()); kprint("\n");
+
+    usermode_start();
+
+    kernel_idle();
+}
+
+void kernel_idle(void) {
+    __asm__ volatile ("sti");
 
     uint8_t previous = 0;
 

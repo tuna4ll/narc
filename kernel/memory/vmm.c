@@ -61,10 +61,12 @@ uint64_t vmm_virt_to_phys(uint64_t virt) {
     return (e & PTE_ADDR_MASK) + (virt & 0xFFF);
 }
 
-static uint64_t *get_next_table(uint64_t *table, uint64_t index) {
+static uint64_t *get_next_table(uint64_t *table, uint64_t index, uint64_t flags) {
     if (table[index] & PTE_PRESENT) {
         if (table[index] & PTE_HUGE)
             return NULL;
+        if (flags & PTE_USER)
+            table[index] |= PTE_USER;
         return phys_to_table(table[index] & PTE_ADDR_MASK);
     }
 
@@ -74,7 +76,7 @@ static uint64_t *get_next_table(uint64_t *table, uint64_t index) {
 
     memset(phys_to_table(page), 0, PAGE_SIZE);
 
-    table[index] = page | PTE_PRESENT | PTE_WRITE;
+    table[index] = page | PTE_PRESENT | PTE_WRITE | (flags & PTE_USER);
     return phys_to_table(page);
 }
 
@@ -83,11 +85,11 @@ bool vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
         return false;
 
     uint64_t *pml4 = phys_to_table(kernel_pml4);
-    uint64_t *pdpt = get_next_table(pml4, PML4_INDEX(virt));
+    uint64_t *pdpt = get_next_table(pml4, PML4_INDEX(virt), flags);
     if (!pdpt) return false;
-    uint64_t *pd = get_next_table(pdpt, PDPT_INDEX(virt));
+    uint64_t *pd = get_next_table(pdpt, PDPT_INDEX(virt), flags);
     if (!pd) return false;
-    uint64_t *pt = get_next_table(pd, PD_INDEX(virt));
+    uint64_t *pt = get_next_table(pd, PD_INDEX(virt), flags);
     if (!pt) return false;
 
     pt[PT_INDEX(virt)] = phys | flags | PTE_PRESENT;
@@ -98,9 +100,9 @@ bool vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
 
 static bool map_2mb(uint64_t virt, uint64_t phys, uint64_t flags) {
     uint64_t *pml4 = phys_to_table(kernel_pml4);
-    uint64_t *pdpt = get_next_table(pml4, PML4_INDEX(virt));
+    uint64_t *pdpt = get_next_table(pml4, PML4_INDEX(virt), flags);
     if (!pdpt) return false;
-    uint64_t *pd = get_next_table(pdpt, PDPT_INDEX(virt));
+    uint64_t *pd = get_next_table(pdpt, PDPT_INDEX(virt), flags);
     if (!pd) return false;
 
     if ((pd[PD_INDEX(virt)] & PTE_PRESENT) && !(pd[PD_INDEX(virt)] & PTE_HUGE))
@@ -147,7 +149,7 @@ bool vmm_init(struct boot_info *boot) {
     memset(pml4, 0, PAGE_SIZE);
 
     for (int i = 256; i < 512; i++) {
-        if (!get_next_table(pml4, i))
+        if (!get_next_table(pml4, i, 0))
             return false;
     }
 
