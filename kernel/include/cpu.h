@@ -1,7 +1,7 @@
 #ifndef KERNEL_CPU_H
 #define KERNEL_CPU_H
 
-/* CPU'yu durdurur, geri dönmez */
+/* halts forever */
 __attribute__((noreturn))
 void khalt(void);
 

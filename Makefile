@@ -6,7 +6,7 @@ CURL := curl
 GIT := git
 BUILD := build
 
-# dış bağımlılıklar, ilk build'de build/ içine indirilip derleniyor
+# deps, fetched into build/
 LIMINE_VERSION := 12.9.6
 LIMINE_URL := https://github.com/limine-bootloader/limine/releases/download/v$(LIMINE_VERSION)/limine-$(LIMINE_VERSION).tar.gz
 FLANTERM_URL := https://github.com/mintsuki/flanterm.git
@@ -17,29 +17,24 @@ LIMINE_BIN := $(LIMINE_DIR)/bin
 FLANTERM_DIR := $(BUILD)/flanterm
 DEPS_STAMPS := $(LIMINE_DIR)/configure $(FLANTERM_DIR)/.git
 
-# UEFI ile çalıştırmak için (make run-uefi)
+# for run-uefi
 OVMF := /usr/share/ovmf/x64/OVMF.4m.fd
 
-# -ffreestanding: libc yok
-# -mno-red-zone: interrupt geldiğinde red zone ezilir, kernel'de kapalı olmalı
-# -fno-stack-protector: __stack_chk_fail libc'de, bizde yok
-# -mcmodel=kernel: kernel en üst 2 GiB'ta (0xffffffff80000000), linker.ld'ye bak
-# -fno-tree-loop-distribute-patterns: gcc memset döngüsünü memset çağrısına çevirmesin (mem.c kendini çağırır)
-# -MMD -MP: header değişince ilgili .c'ler yeniden derlensin
+# no red zone: irqs clobber it
+# no loop patterns: mem.c would call itself
 CFLAGS := -m64 -std=gnu11 -O2 -Wall -Wextra -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -fno-lto -mno-red-zone -mgeneral-regs-only -mcmodel=kernel -fno-tree-loop-distribute-patterns
 CFLAGS += -Ikernel/include -I$(LIMINE_DIR)/limine-protocol/include -I$(FLANTERM_DIR)/src -MMD -MP
 
 LDFLAGS := -m elf_x86_64 -nostdlib -static -z max-page-size=0x1000 -T kernel/linker.ld
 
-# kernel/ altındaki bütün .c'ler otomatik
+# all kernel .c files
 KERNEL_SRCS := $(sort $(shell find kernel -name '*.c'))
 KERNEL_OBJS := $(patsubst kernel/%.c,$(BUILD)/kernel/%.o,$(KERNEL_SRCS))
 
 FLANTERM_SRCS := $(FLANTERM_DIR)/src/flanterm.c $(FLANTERM_DIR)/src/flanterm_backends/fb.c
 FLANTERM_OBJS := $(patsubst $(FLANTERM_DIR)/src/%.c,$(BUILD)/flanterm-obj/%.o,$(FLANTERM_SRCS))
 
-# userspace programı, kernel'den ayrı derlenip düz binary yapılıyor
-# -mgeneral-regs-only: limine SSE'yi açmıyor, user kodu da SSE kullanmasın
+# user code, no sse (limine leaves it off)
 USER_CFLAGS := -m64 -std=gnu11 -O2 -Wall -Wextra -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -mgeneral-regs-only -fno-tree-loop-distribute-patterns
 USER_SRCS := user/libc.c user/hello.c
 USER_OBJS := $(patsubst user/%.c,$(BUILD)/user/%.o,$(USER_SRCS))
@@ -63,13 +58,12 @@ $(LIMINE_DIR)/configure:
 $(FLANTERM_DIR)/.git:
 	$(GIT) clone --branch=$(FLANTERM_REF) --depth=1 $(FLANTERM_URL) $(FLANTERM_DIR)
 
-# sadece x86_64 için lazım olanlar: BIOS (cd + hdd), UEFI x86_64/ia32, UEFI cd imajı
-# nasm ve mtools lazım
+# x86_64 only, needs nasm and mtools
 $(LIMINE_BIN)/limine: | $(LIMINE_DIR)/configure
 	cd $(LIMINE_DIR) && ./configure -q --enable-bios --enable-bios-cd --enable-uefi-x86-64 --enable-uefi-ia32 --enable-uefi-cd
 	$(MAKE) -C $(LIMINE_DIR)
 
-# header'lar clone'dan geliyor, önce onlar insin (order-only)
+# headers come from deps
 $(BUILD)/kernel/%.o: kernel/%.c | $(DEPS_STAMPS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -86,7 +80,7 @@ $(BUILD)/user/hello.elf: $(USER_OBJS) user/linker.ld
 $(USER_BIN): $(BUILD)/user/hello.elf
 	objcopy -O binary $< $@
 
-# usermode.c hello.bin'i .incbin ile gömüyor
+# usermode.c incbins this
 $(BUILD)/kernel/user/usermode.o: $(USER_BIN)
 
 $(FLANTERM_SRCS): | $(FLANTERM_DIR)/.git
@@ -98,7 +92,7 @@ $(BUILD)/flanterm-obj/%.o: $(FLANTERM_DIR)/src/%.c | $(DEPS_STAMPS)
 $(BUILD)/kernel.elf: $(KERNEL_OBJS) $(FLANTERM_OBJS) kernel/linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(KERNEL_OBJS) $(FLANTERM_OBJS)
 
-# BIOS + UEFI hibrit ISO (limine USAGE.md'deki tarif)
+# bios + uefi iso
 $(ISO): $(BUILD)/kernel.elf boot/limine.conf $(LIMINE_BIN)/limine
 	rm -rf $(ISO_ROOT)
 	mkdir -p $(ISO_ROOT)/boot/limine $(ISO_ROOT)/EFI/BOOT
@@ -113,7 +107,7 @@ $(ISO): $(BUILD)/kernel.elf boot/limine.conf $(LIMINE_BIN)/limine
 		$(ISO_ROOT) -o $@ 2>/dev/null
 	$(LIMINE_BIN)/limine bios-install $@
 
-# LC_ALL=C: türkçe locale'de readelf 'Entry point' yazmıyor
+# readelf is localized
 check: all
 	@echo 'ELF entry:'
 	@LC_ALL=C readelf -h $(BUILD)/kernel.elf | grep 'Entry point'
@@ -126,7 +120,7 @@ run: all
 run-uefi: all
 	$(QEMU) -M q35 -m 256M -drive if=pflash,unit=0,format=raw,file=$(OVMF),readonly=on -cdrom $(ISO) -boot d -debugcon stdio -global isa-debugcon.iobase=0xe9
 
-# clone'lanan bağımlılıklar kalıyor, her seferinde indirmesin
+# keeps deps
 clean:
 	rm -rf $(BUILD)/kernel $(BUILD)/flanterm-obj $(BUILD)/user $(BUILD)/kernel.elf $(ISO_ROOT) $(ISO)
 

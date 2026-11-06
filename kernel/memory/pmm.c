@@ -1,8 +1,3 @@
- /* 
- 
- */
-
-
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -38,7 +33,7 @@ static bool pmm_usable_page(uint64_t page) {
     return page < tracked_pages;
 }
 
-/* bölgenin içinde kalan tam sayfaları verir, hizalama bootloader'a bırakılmaz */
+/* whole pages inside region */
 static bool region_pages(
     const struct mem_region *region,
     uint64_t *first_page,
@@ -155,7 +150,7 @@ bool pmm_init(
         for (uint64_t j = 0; j < page_count; j++) {
             uint64_t page = first_page + j;
 
-            /* çakışan bölge gelirse aynı sayfayı iki kez saymayalım */
+            /* skip overlaps */
             if (page < tracked_pages && bitmap_test(page)) {
                 bitmap_clear(page);
                 total_pages++;
