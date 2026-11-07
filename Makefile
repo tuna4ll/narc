@@ -36,14 +36,14 @@ FLANTERM_OBJS := $(patsubst $(FLANTERM_DIR)/src/%.c,$(BUILD)/flanterm-obj/%.o,$(
 
 # user code, no sse (limine leaves it off)
 USER_CFLAGS := -m64 -std=gnu11 -O2 -Wall -Wextra -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -mgeneral-regs-only -fno-tree-loop-distribute-patterns
-USER_SRCS := user/libc.c user/hello.c
-USER_OBJS := $(patsubst user/%.c,$(BUILD)/user/%.o,$(USER_SRCS))
-USER_BIN := $(BUILD)/user/hello.bin
+USER_PROGS := hello crash cli
+USER_BINS := $(patsubst %,$(BUILD)/user/%.bin,$(USER_PROGS))
 
 ISO := $(BUILD)/narc.iso
 ISO_ROOT := $(BUILD)/iso_root
 
 .PHONY: all deps run run-uefi clean distclean check
+.SECONDARY:
 all: $(ISO)
 
 deps: $(DEPS_STAMPS) $(LIMINE_BIN)/limine
@@ -74,14 +74,13 @@ $(BUILD)/user/%.o: user/%.c user/libc.h
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
-$(BUILD)/user/hello.elf: $(USER_OBJS) user/linker.ld
-	$(LD) -m elf_x86_64 -nostdlib -static -T user/linker.ld -o $@ $(USER_OBJS)
+$(BUILD)/user/%.elf: $(BUILD)/user/%.o $(BUILD)/user/libc.o user/linker.ld
+	$(LD) -m elf_x86_64 -nostdlib -static -T user/linker.ld -o $@ $(BUILD)/user/libc.o $<
 
-$(USER_BIN): $(BUILD)/user/hello.elf
+$(BUILD)/user/%.bin: $(BUILD)/user/%.elf
 	objcopy -O binary $< $@
 
-# usermode.c incbins this
-$(BUILD)/kernel/user/usermode.o: $(USER_BIN)
+$(BUILD)/kernel/proc/programs.o: $(USER_BINS)
 
 $(FLANTERM_SRCS): | $(FLANTERM_DIR)/.git
 

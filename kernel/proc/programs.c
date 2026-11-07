@@ -1,0 +1,16 @@
+__asm__(
+    ".section .rodata\n"
+    ".global prog_hello, prog_hello_end\n"
+    "prog_hello:\n"
+    ".incbin \"build/user/hello.bin\"\n"
+    "prog_hello_end:\n"
+    ".global prog_crash, prog_crash_end\n"
+    "prog_crash:\n"
+    ".incbin \"build/user/crash.bin\"\n"
+    "prog_crash_end:\n"
+    ".global prog_cli, prog_cli_end\n"
+    "prog_cli:\n"
+    ".incbin \"build/user/cli.bin\"\n"
+    "prog_cli_end:\n"
+    ".previous\n"
+);

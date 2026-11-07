@@ -1,7 +1,7 @@
 #include <stdint.h>
 
 #include "terminal.h"
-#include "kernel.h"
+#include "process.h"
 
 #define SYS_WRITE 1
 #define SYS_EXIT  60
@@ -65,10 +65,7 @@ void syscall_handler(struct syscall_regs *regs) {
 
         regs->rax = len;
     } else if (regs->rax == SYS_EXIT) {
-        kprint("USER: program exited with code ");
-        kprint_dec(regs->rdi);
-        kprint("\n");
-        kernel_idle();
+        process_exit((int)regs->rdi);
     } else {
         regs->rax = -1;
     }

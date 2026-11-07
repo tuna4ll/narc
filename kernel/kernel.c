@@ -16,7 +16,7 @@
 #include "gdt.h"
 #include "tss.h"
 #include "kernel.h"
-#include "usermode.h"
+#include "process.h"
 #include "random.h"
 
 static int not_heap;
@@ -343,9 +343,19 @@ void kmain(void) {
     kprint("HEAP: pmm free pages before "); kprint_dec(pmm_before);
     kprint(" after "); kprint_dec(pmm_get_free_pages()); kprint("\n");
 
-    usermode_start();
+    extern const uint8_t prog_hello[], prog_hello_end[];
+    extern const uint8_t prog_crash[], prog_crash_end[];
+    extern const uint8_t prog_cli[], prog_cli_end[];
 
-    kernel_idle();
+    kprint("PROC: free pages before ");
+    kprint_dec(pmm_get_free_pages());
+    kprint("\n");
+
+    process_create("crash", prog_crash, prog_crash_end - prog_crash);
+    process_create("cli", prog_cli, prog_cli_end - prog_cli);
+    process_create("hello", prog_hello, prog_hello_end - prog_hello);
+
+    process_start_next();
 }
 
 void kernel_idle(void) {

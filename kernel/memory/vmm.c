@@ -81,10 +81,14 @@ static uint64_t *get_next_table(uint64_t *table, uint64_t index, uint64_t flags)
 }
 
 bool vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
+    return vmm_map_page_in(kernel_pml4, virt, phys, flags);
+}
+
+bool vmm_map_page_in(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint64_t flags) {
     if ((virt & 0xFFF) || (phys & 0xFFF))
         return false;
 
-    uint64_t *pml4 = phys_to_table(kernel_pml4);
+    uint64_t *pml4 = phys_to_table(pml4_phys);
     uint64_t *pdpt = get_next_table(pml4, PML4_INDEX(virt), flags);
     if (!pdpt) return false;
     uint64_t *pd = get_next_table(pdpt, PDPT_INDEX(virt), flags);
@@ -222,4 +226,54 @@ uint64_t vmm_unmap_page(uint64_t virt) {
     }
 
     return page & PTE_ADDR_MASK;
+}
+
+void *vmm_phys_to_virt(uint64_t phys) {
+    return (void *)(phys + hhdm);
+}
+
+uint64_t vmm_kernel_space(void) {
+    return kernel_pml4;
+}
+
+uint64_t vmm_new_address_space(void) {
+    uint64_t pml4 = pmm_alloc_page();
+    if (pml4 == 0)
+        return 0;
+
+    uint64_t *new_table = phys_to_table(pml4);
+    uint64_t *kernel_table = phys_to_table(kernel_pml4);
+
+    for (int i = 0; i < 256; i++)
+        new_table[i] = 0;
+    for (int i = 256; i < 512; i++)
+        new_table[i] = kernel_table[i];
+
+    return pml4;
+}
+
+static void free_table(uint64_t phys, int level) {
+    uint64_t *t = phys_to_table(phys);
+
+    for (int i = 0; i < 512; i++) {
+        if (!(t[i] & PTE_PRESENT))
+            continue;
+        if (level == 1)
+            pmm_free_page(t[i] & PTE_ADDR_MASK);
+        else
+            free_table(t[i] & PTE_ADDR_MASK, level - 1);
+    }
+
+    pmm_free_page(phys);
+}
+
+void vmm_free_address_space(uint64_t pml4) {
+    uint64_t *t = phys_to_table(pml4);
+
+    for (int i = 0; i < 256; i++) {
+        if (t[i] & PTE_PRESENT)
+            free_table(t[i] & PTE_ADDR_MASK, 3);
+    }
+
+    pmm_free_page(pml4);
 }

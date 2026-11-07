@@ -3,6 +3,7 @@
 #include "terminal.h"
 #include "pic.h"
 #include "keyboard.h"
+#include "process.h"
 
 extern void syscall_entry(void);
 
@@ -60,12 +61,45 @@ static void page_fault_handler(
     uint64_t cr2;
     __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
 
+    if ((frame->cs & 3) == 3) {
+        kprint("PROC: page fault at ");
+        kprint_hex(cr2);
+        kprint(" error ");
+        kprint_hex(error_code);
+        kprint(", killing it\n");
+        process_exit(-11);
+    }
+
     kprint("\nPage Fault!\n");
     kprint("  address: ");
     kprint_hex(cr2);
     kprint("\n  error:   ");
     kprint_hex(error_code);
     kprint("\n  rip:     ");
+    kprint_hex(frame->rip);
+    kprint("\n");
+
+    for (;;) {
+        __asm__ volatile ("cli; hlt");
+    }
+}
+
+__attribute__((interrupt))
+static void gp_fault_handler(
+    interrupt_frame_t *frame,
+    uint64_t error_code
+) {
+    if ((frame->cs & 3) == 3) {
+        kprint("PROC: general protection fault at rip ");
+        kprint_hex(frame->rip);
+        kprint(", killing it\n");
+        process_exit(-13);
+    }
+
+    kprint("\nGeneral Protection Fault!\n");
+    kprint("  error: ");
+    kprint_hex(error_code);
+    kprint("\n  rip:   ");
     kprint_hex(frame->rip);
     kprint("\n");
 
@@ -118,6 +152,7 @@ void idt_init(void) {
     idt_set_gate(3, (void *)breakpoint_handler);
     idt_set_gate(8, (void *)double_fault_handler);
     idt[8].ist = 1;
+    idt_set_gate(13, (void *)gp_fault_handler);
     idt_set_gate(14, (void *)page_fault_handler);
 
     idt_set_gate(32, (void *)timer_handler);
