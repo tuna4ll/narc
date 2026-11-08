@@ -5,20 +5,16 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "mem.h"
-#include "terminal.h"
+#include "kprint.h"
 #include "kernel.h"
+#include "heap.h"
+#include "tss.h"
 
 static struct process processes[MAX_PROCESSES];
 static struct process *current = NULL;
+static struct process idle;
 static int next_pid = 1;
-
-static void print_signed(int64_t n) {
-    if (n < 0) {
-        kprint("-");
-        n = -n;
-    }
-    kprint_dec(n);
-}
+static uint64_t slice_used = 0;
 
 static uint64_t map_new_page(uint64_t pml4, uint64_t virt, uint64_t flags) {
     uint64_t phys = pmm_alloc_page();
@@ -71,72 +67,102 @@ struct process *process_create(const char *name, const uint8_t *code, uint64_t s
         }
     }
 
+    uint8_t *kstack = kmalloc(KERNEL_STACK_SIZE);
+    if (kstack == NULL) {
+        vmm_free_address_space(pml4);
+        return NULL;
+    }
+
+    uint64_t *frame = (uint64_t *)(kstack + KERNEL_STACK_SIZE);
+    *--frame = 0x1B;
+    *--frame = USER_STACK_TOP - 8;
+    *--frame = 0x202;
+    *--frame = 0x23;
+    *--frame = USER_CODE_ADDR;
+    for (int i = 0; i < 15; i++)
+        *--frame = 0;
+
     p->pid = next_pid++;
     p->name = name;
     p->pml4 = pml4;
+    p->kernel_stack = kstack;
+    p->rsp = (uint64_t)frame;
     p->state = PROC_READY;
 
-    kprint("PROC: created pid ");
-    kprint_dec(p->pid);
-    kprint(" (");
-    kprint(name);
-    kprint(") cr3 ");
-    kprint_hex(pml4);
-    kprint(" code phys ");
-    kprint_hex(first_phys);
-    kprint("\n");
+    kprint("PROC: created pid %d (%s) cr3 0x%lx code phys 0x%lx\n", p->pid, name, pml4, first_phys);
 
     return p;
 }
 
-struct process *process_current(void) {
-    return current;
-}
-
-static void jump_to_usermode(uint64_t entry, uint64_t stack) {
-    __asm__ volatile (
-        "pushq $0x1B\n"
-        "pushq %0\n"
-        "pushq $0x202\n"
-        "pushq $0x23\n"
-        "pushq %1\n"
-        "iretq\n"
-        : : "r"(stack), "r"(entry) : "memory"
-    );
-}
-
-void process_start_next(void) {
+static void free_dead_processes(void) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
-        if (processes[i].state == PROC_READY) {
-            current = &processes[i];
-            current->state = PROC_RUNNING;
-            vmm_write_cr3(current->pml4);
-            jump_to_usermode(USER_CODE_ADDR, USER_STACK_TOP - 8);
+        struct process *p = &processes[i];
+        if (p->state == PROC_DEAD && p != current) {
+            vmm_free_address_space(p->pml4);
+            kfree(p->kernel_stack);
+            p->state = PROC_UNUSED;
+        }
+    }
+}
+
+uint64_t schedule(uint64_t rsp) {
+    if (current == NULL)
+        return rsp;
+
+    current->rsp = rsp;
+    if (current->state == PROC_RUNNING)
+        current->state = PROC_READY;
+
+    free_dead_processes();
+
+    int start = 0;
+    if (current != &idle)
+        start = (current - processes) + 1;
+
+    struct process *next = &idle;
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        struct process *p = &processes[(start + i) % MAX_PROCESSES];
+        if (p->state == PROC_READY) {
+            next = p;
+            break;
         }
     }
 
-    current = NULL;
-    kprint("PROC: no processes left, free pages ");
-    kprint_dec(pmm_get_free_pages());
-    kprint("\n");
+    current = next;
+    current->state = PROC_RUNNING;
+    slice_used = 0;
+
+    if (next != &idle)
+        tss_set_rsp0((uint64_t)next->kernel_stack + KERNEL_STACK_SIZE);
+    vmm_write_cr3(next->pml4);
+
+    return next->rsp;
+}
+
+uint64_t scheduler_tick(uint64_t rsp) {
+    if (current == NULL)
+        return rsp;
+    if (current != &idle && current->state == PROC_RUNNING && ++slice_used < QUANTUM_TICKS)
+        return rsp;
+    return schedule(rsp);
+}
+
+void scheduler_start(void) {
+    idle.pid = 0;
+    idle.name = "idle";
+    idle.pml4 = vmm_kernel_space();
+    idle.state = PROC_RUNNING;
+    current = &idle;
+
+    kprint("SCHED: starting\n");
     kernel_idle();
 }
 
 void process_exit(int64_t code) {
-    struct process *p = current;
+    kprint("PROC: pid %d (%s) exited with code %ld\n", current->pid, current->name, code);
 
-    kprint("PROC: pid ");
-    kprint_dec(p->pid);
-    kprint(" (");
-    kprint(p->name);
-    kprint(") exited with code ");
-    print_signed(code);
-    kprint("\n");
+    current->state = PROC_DEAD;
 
-    vmm_write_cr3(vmm_kernel_space());
-    vmm_free_address_space(p->pml4);
-    p->state = PROC_UNUSED;
-    current = NULL;
-
-    process_start_next();
+    for (;;)
+        __asm__ volatile ("sti; hlt");
 }

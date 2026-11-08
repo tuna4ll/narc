@@ -1,7 +1,7 @@
 #include <stdint.h>
 
 #include "gdt.h"
-#include "terminal.h"
+#include "kprint.h"
 
 static struct gdt_entry gdt[7];
 static struct gdt_ptr gp;

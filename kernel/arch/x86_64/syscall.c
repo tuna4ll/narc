@@ -4,6 +4,7 @@
 #include "process.h"
 
 #define SYS_WRITE 1
+#define SYS_YIELD 24
 #define SYS_EXIT  60
 
 struct syscall_regs {
@@ -31,6 +32,7 @@ __asm__(
     "    push %r15\n"
     "    mov %rsp, %rdi\n"
     "    call syscall_handler\n"
+    "    mov %rax, %rsp\n"
     "    pop %r15\n"
     "    pop %r14\n"
     "    pop %r13\n"
@@ -50,23 +52,27 @@ __asm__(
 );
 
 __attribute__((used))
-void syscall_handler(struct syscall_regs *regs) {
+uint64_t syscall_handler(struct syscall_regs *regs) {
     if (regs->rax == SYS_WRITE) {
         const char *buf = (const char *)regs->rdi;
         uint64_t len = regs->rsi;
 
         if (regs->rdi >= 0x800000000000 || len > 4096) {
             regs->rax = -1;
-            return;
+            return (uint64_t)regs;
         }
 
         for (uint64_t i = 0; i < len; i++)
             terminal_putchar(buf[i]);
 
         regs->rax = len;
+    } else if (regs->rax == SYS_YIELD) {
+        regs->rax = 0;
+        return schedule((uint64_t)regs);
     } else if (regs->rax == SYS_EXIT) {
         process_exit((int)regs->rdi);
     } else {
         regs->rax = -1;
     }
+    return (uint64_t)regs;
 }

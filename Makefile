@@ -23,7 +23,7 @@ OVMF := /usr/share/ovmf/x64/OVMF.4m.fd
 # no red zone: irqs clobber it
 # no loop patterns: mem.c would call itself
 CFLAGS := -m64 -std=gnu11 -O2 -Wall -Wextra -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -fno-lto -mno-red-zone -mgeneral-regs-only -mcmodel=kernel -fno-tree-loop-distribute-patterns
-CFLAGS += -Ikernel/include -I$(LIMINE_DIR)/limine-protocol/include -I$(FLANTERM_DIR)/src -MMD -MP
+CFLAGS += -Ikernel/include -Ikernel/klibc -I$(LIMINE_DIR)/limine-protocol/include -I$(FLANTERM_DIR)/src -MMD -MP
 
 LDFLAGS := -m elf_x86_64 -nostdlib -static -z max-page-size=0x1000 -T kernel/linker.ld
 
@@ -36,7 +36,7 @@ FLANTERM_OBJS := $(patsubst $(FLANTERM_DIR)/src/%.c,$(BUILD)/flanterm-obj/%.o,$(
 
 # user code, no sse (limine leaves it off)
 USER_CFLAGS := -m64 -std=gnu11 -O2 -Wall -Wextra -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -mgeneral-regs-only -fno-tree-loop-distribute-patterns
-USER_PROGS := hello crash cli
+USER_PROGS := hello crash cli a b spin
 USER_BINS := $(patsubst %,$(BUILD)/user/%.bin,$(USER_PROGS))
 
 ISO := $(BUILD)/narc.iso

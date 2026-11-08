@@ -1,6 +1,6 @@
 
 #include "idt.h"
-#include "terminal.h"
+#include "kprint.h"
 #include "pic.h"
 #include "keyboard.h"
 #include "process.h"
@@ -43,13 +43,52 @@ static void breakpoint_handler(interrupt_frame_t *frame) {
 
 static volatile uint64_t ticks = 0;
 
-__attribute__((interrupt))
-static void timer_handler(interrupt_frame_t *frame) {
-    (void)frame;
+extern void timer_entry(void);
 
+__asm__(
+    ".global timer_entry\n"
+    "timer_entry:\n"
+    "    push %rax\n"
+    "    push %rbx\n"
+    "    push %rcx\n"
+    "    push %rdx\n"
+    "    push %rsi\n"
+    "    push %rdi\n"
+    "    push %rbp\n"
+    "    push %r8\n"
+    "    push %r9\n"
+    "    push %r10\n"
+    "    push %r11\n"
+    "    push %r12\n"
+    "    push %r13\n"
+    "    push %r14\n"
+    "    push %r15\n"
+    "    mov %rsp, %rdi\n"
+    "    call timer_interrupt\n"
+    "    mov %rax, %rsp\n"
+    "    pop %r15\n"
+    "    pop %r14\n"
+    "    pop %r13\n"
+    "    pop %r12\n"
+    "    pop %r11\n"
+    "    pop %r10\n"
+    "    pop %r9\n"
+    "    pop %r8\n"
+    "    pop %rbp\n"
+    "    pop %rdi\n"
+    "    pop %rsi\n"
+    "    pop %rdx\n"
+    "    pop %rcx\n"
+    "    pop %rbx\n"
+    "    pop %rax\n"
+    "    iretq\n"
+);
+
+__attribute__((used))
+uint64_t timer_interrupt(uint64_t rsp) {
     ticks++;
-
     pic_send_eoi(0);
+    return scheduler_tick(rsp);
 }
 
 
@@ -62,22 +101,11 @@ static void page_fault_handler(
     __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
 
     if ((frame->cs & 3) == 3) {
-        kprint("PROC: page fault at ");
-        kprint_hex(cr2);
-        kprint(" error ");
-        kprint_hex(error_code);
-        kprint(", killing it\n");
+        kprint("PROC: page fault at 0x%lx error 0x%lx, killing it\n", cr2, error_code);
         process_exit(-11);
     }
 
-    kprint("\nPage Fault!\n");
-    kprint("  address: ");
-    kprint_hex(cr2);
-    kprint("\n  error:   ");
-    kprint_hex(error_code);
-    kprint("\n  rip:     ");
-    kprint_hex(frame->rip);
-    kprint("\n");
+    kprint("\nPage Fault!\n  address: 0x%lx\n  error:   0x%lx\n  rip:     0x%lx\n", cr2, error_code, frame->rip);
 
     for (;;) {
         __asm__ volatile ("cli; hlt");
@@ -90,18 +118,11 @@ static void gp_fault_handler(
     uint64_t error_code
 ) {
     if ((frame->cs & 3) == 3) {
-        kprint("PROC: general protection fault at rip ");
-        kprint_hex(frame->rip);
-        kprint(", killing it\n");
+        kprint("PROC: general protection fault at rip 0x%lx, killing it\n", frame->rip);
         process_exit(-13);
     }
 
-    kprint("\nGeneral Protection Fault!\n");
-    kprint("  error: ");
-    kprint_hex(error_code);
-    kprint("\n  rip:   ");
-    kprint_hex(frame->rip);
-    kprint("\n");
+    kprint("\nGeneral Protection Fault!\n  error: 0x%lx\n  rip:   0x%lx\n", error_code, frame->rip);
 
     for (;;) {
         __asm__ volatile ("cli; hlt");
@@ -118,14 +139,7 @@ static void double_fault_handler(
     uint64_t rsp;
     __asm__ volatile ("mov %%rsp, %0" : "=r"(rsp));
 
-    kprint("\nDouble Fault!\n");
-    kprint("  rip: ");
-    kprint_hex(frame->rip);
-    kprint("\n  rsp when it happened: ");
-    kprint_hex(frame->rsp);
-    kprint("\n  rsp in handler:       ");
-    kprint_hex(rsp);
-    kprint("\n");
+    kprint("\nDouble Fault!\n  rip: 0x%lx\n  rsp when it happened: 0x%lx\n  rsp in handler:       0x%lx\n", frame->rip, frame->rsp, rsp);
 
     for (;;) {
         __asm__ volatile ("cli; hlt");
@@ -155,7 +169,7 @@ void idt_init(void) {
     idt_set_gate(13, (void *)gp_fault_handler);
     idt_set_gate(14, (void *)page_fault_handler);
 
-    idt_set_gate(32, (void *)timer_handler);
+    idt_set_gate(32, (void *)timer_entry);
     idt_set_gate(33, (void *)keyboard_handler);
 
     idt_set_gate(0x80, (void *)syscall_entry);

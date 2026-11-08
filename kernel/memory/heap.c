@@ -6,7 +6,7 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "mem.h"
-#include "terminal.h"
+#include "kprint.h"
 
 #define BLOCK_MAGIC 0x4E415243484541ull
 #define ALIGN 16
@@ -43,11 +43,7 @@ static void heap_unlock(uint64_t flags) {
 }
 
 static void heap_warn(const char *msg, void *ptr) {
-    kprint("HEAP: ");
-    kprint(msg);
-    kprint(" ");
-    kprint_hex((uint64_t)ptr);
-    kprint("\n");
+    kprint("HEAP: %s %p\n", msg, ptr);
 }
 
 static size_t align_up(size_t n) {

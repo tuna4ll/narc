@@ -22,5 +22,6 @@ struct tss {
 } __attribute__((packed));
 
 void tss_init(void);
+void tss_set_rsp0(uint64_t rsp0);
 
 #endif

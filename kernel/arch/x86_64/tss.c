@@ -2,7 +2,7 @@
 
 #include "tss.h"
 #include "gdt.h"
-#include "terminal.h"
+#include "kprint.h"
 
 static struct tss tss;
 
@@ -19,4 +19,8 @@ void tss_init(void) {
     __asm__ volatile ("ltr %0" : : "r"((uint16_t)TSS_SEG));
 
     kprint("TSS initialized!\n");
+}
+
+void tss_set_rsp0(uint64_t rsp0) {
+    tss.rsp0 = rsp0;
 }

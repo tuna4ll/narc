@@ -1,6 +1,7 @@
 #include "libc.h"
 
 #define SYS_WRITE 1
+#define SYS_YIELD 24
 #define SYS_EXIT  60
 
 int main(void);
@@ -24,6 +25,10 @@ long write(const char *buf, size_t len) {
 
 void print(const char *s) {
     write(s, strlen(s));
+}
+
+void yield(void) {
+    syscall2(SYS_YIELD, 0, 0);
 }
 
 void exit(int code) {

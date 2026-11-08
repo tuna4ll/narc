@@ -75,37 +75,3 @@ void terminal_putchar(char c) {
 
     flanterm_write(ft_ctx, &c, 1);
 }
-
-void kprint(const char *c) {
-    for (size_t i = 0; c[i] != '\0'; i++) {
-        terminal_putchar(c[i]);
-    }
-}
-
-void kprint_hex(uint64_t n) {
-    char buf[19];
-    const char *digits = "0123456789ABCDEF";
-
-    buf[0] = '0';
-    buf[1] = 'x';
-    for (int i = 0; i < 16; i++) {
-        buf[17 - i] = digits[n & 0xF];
-        n >>= 4;
-    }
-    buf[18] = '\0';
-
-    kprint(buf);
-}
-
-void kprint_dec(uint64_t n) {
-    char buf[21];
-    int i = 20;
-
-    buf[i] = '\0';
-    do {
-        buf[--i] = '0' + n % 10;
-        n /= 10;
-    } while (n > 0);
-
-    kprint(&buf[i]);
-}

@@ -6,6 +6,7 @@
 #include "io.h"
 #include "cpu.h"
 #include "terminal.h"
+#include "kprint.h"
 #include "pit.h"
 #include "idt.h"
 #include "pic.h"
@@ -120,8 +121,7 @@ void kmain(void) {
 
     struct heap_stats st;
     heap_get_stats(&st);
-    kprint("HEAP: terminal is using "); kprint_dec(st.used);
-    kprint(" bytes, heap mapped "); kprint_dec(st.mapped); kprint("\n");
+    kprint("HEAP: terminal is using %lu bytes, heap mapped %lu\n", st.used, st.mapped);
 
     kprint("PMM memory map initialized!\n");
 
@@ -154,17 +154,17 @@ void kmain(void) {
 
     kprint("Narc\n");
 
-    kprint("      %%%%%@%##     \n");
-    kprint(" *+   %%%@%#@%#%    \n");
-    kprint(" +-=  @%++++*%%@    \n");
-    kprint(" #*#@ @*#%=*+*@@    \n");
-    kprint("   #*###****=-+%   \n") ;
-    kprint("  %++==:=**+-:-.-+\n")  ;
+    kprint("      %%%%%%%%%%@%%##     \n");
+    kprint(" *+   %%%%%%@%%#@%%#%%    \n");
+    kprint(" +-=  @%%++++*%%%%@    \n");
+    kprint(" #*#@ @*#%%=*+*@@    \n");
+    kprint("   #*###****=-+%%   \n") ;
+    kprint("  %%++==:=**+-:-.-+\n")  ;
     kprint("   -::-:-=:.-----:*\n") ;
-    kprint("  %%*=----..-**+.=*\n") ;
-    kprint(" @###*:-..:-=*##-+%\n") ;
-    kprint("  ###*+==*:-**#*#%\n")  ;
-    kprint("   %##@    %####\n\n\n")    ;
+    kprint("  %%%%*=----..-**+.=*\n") ;
+    kprint(" @###*:-..:-=*##-+%%\n") ;
+    kprint("  ###*+==*:-**#*#%%\n")  ;
+    kprint("   %%##@    %%####\n\n\n")    ;
 
     uint16_t old_cs;
     __asm__ volatile ("mov %%cs, %0" : "=r"(old_cs));
@@ -173,11 +173,7 @@ void kmain(void) {
 
     uint16_t new_cs;
     __asm__ volatile ("mov %%cs, %0" : "=r"(new_cs));
-    kprint("CS before: ");
-    kprint_hex(old_cs);
-    kprint(" CS after: ");
-    kprint_hex(new_cs);
-    kprint("\n");
+    kprint("CS before: 0x%x CS after: 0x%x\n", old_cs, new_cs);
 
     tss_init();
 
@@ -197,30 +193,16 @@ void kmain(void) {
 
     __asm__ volatile ("sti");
 
-    kprint("VMM: limine CR3 = ");
-    kprint_hex(limine_cr3);
-    kprint("\n");
-    kprint("VMM: narc CR3   = ");
-    kprint_hex(vmm_read_cr3());
-    kprint("\n");
-    kprint("VMM: page tables used ");
-    kprint_dec(vmm_pages);
-    kprint(" pages\n");
+    kprint("VMM: limine CR3 = 0x%lx\n", limine_cr3);
+    kprint("VMM: narc CR3   = 0x%lx\n", vmm_read_cr3());
+    kprint("VMM: page tables used %lu pages\n", vmm_pages);
     kprint("VMM: still alive after CR3 switch :D\n");
 
     uint64_t test_virt = (uint64_t)&kmain;
-    kprint("VMM: kmain virt = ");
-    kprint_hex(test_virt);
-    kprint(" phys = ");
-    kprint_hex(vmm_virt_to_phys(test_virt));
-    kprint("\n");
+    kprint("VMM: kmain virt = 0x%lx phys = 0x%lx\n", test_virt, vmm_virt_to_phys(test_virt));
 
     uint64_t test_page = pmm_alloc_page();
-    kprint("VMM: pmm page = ");
-    kprint_hex(test_page);
-    kprint(" hhdm walk = ");
-    kprint_hex(vmm_virt_to_phys(test_page + boot.hhdm_offset));
-    kprint("\n");
+    kprint("VMM: pmm page = 0x%lx hhdm walk = 0x%lx\n", test_page, vmm_virt_to_phys(test_page + boot.hhdm_offset));
     pmm_free_page(test_page);
 
     uint64_t my_virt = 0xFFFF900000000000;
@@ -232,20 +214,14 @@ void kmain(void) {
         khalt();
     }
 
-    kprint("VMM: mapped ");
-    kprint_hex(my_virt);
-    kprint(" -> ");
-    kprint_hex(vmm_virt_to_phys(my_virt));
-    kprint("\n");
+    kprint("VMM: mapped 0x%lx -> 0x%lx\n", my_virt, vmm_virt_to_phys(my_virt));
 
     volatile uint32_t *p1 = (volatile uint32_t *)my_virt;
     volatile uint32_t *p2 = (volatile uint32_t *)(my_phys + boot.hhdm_offset);
 
     *p1 = 0x4E415243;
 
-    kprint("VMM: write via my_virt, read via hhdm = ");
-    kprint_hex(*p2);
-    kprint("\n");
+    kprint("VMM: write via my_virt, read via hhdm = 0x%x\n", *p2);
 
     if (*p2 == 0x4E415243)
         kprint("VMM: SAME PAGE!!! map works\n");
@@ -253,27 +229,21 @@ void kmain(void) {
     uint64_t freed = vmm_unmap_page(my_virt);
     pmm_free_page(freed);
 
-    kprint("VMM: unmapped, walk now = ");
-    kprint_hex(vmm_virt_to_phys(my_virt));
-    kprint("\n");
+    kprint("VMM: unmapped, walk now = 0x%lx\n", vmm_virt_to_phys(my_virt));
 
-    kprint("VMM: free pages before map = ");
-    kprint_dec(free_map);
-    kprint(" after unmap = ");
-    kprint_dec(pmm_get_free_pages());
-    kprint("\n");
+    kprint("VMM: free pages before map = %lu after unmap = %lu\n", free_map, pmm_get_free_pages());
 
     char *a = kmalloc(100);
     char *b = kmalloc(200);
     char *c = kmalloc(5000);
 
-    kprint("HEAP: a = "); kprint_hex((uint64_t)a); kprint("\n");
-    kprint("HEAP: b = "); kprint_hex((uint64_t)b); kprint("\n");
-    kprint("HEAP: c = "); kprint_hex((uint64_t)c); kprint("\n");
+    kprint("HEAP: a = %p\n", a);
+    kprint("HEAP: b = %p\n", b);
+    kprint("HEAP: c = %p\n", c);
 
     kfree(b);
     char *d = kmalloc(150);
-    kprint("HEAP: freed b, d = "); kprint_hex((uint64_t)d); kprint("\n");
+    kprint("HEAP: freed b, d = %p\n", d);
 
     if (d == b)
         kprint("HEAP: d got b's spot!\n");
@@ -285,8 +255,7 @@ void kmain(void) {
         kfree(p[i]);
 
     char *big = kmalloc(9000);
-    kprint("HEAP: p[0] = "); kprint_hex((uint64_t)p[0]);
-    kprint(" big = "); kprint_hex((uint64_t)big); kprint("\n");
+    kprint("HEAP: p[0] = %p big = %p\n", p[0], big);
     if (big == p[0])
         kprint("HEAP: big reused the 10 freed blocks!\n");
     else
@@ -300,7 +269,7 @@ void kmain(void) {
     for (int i = 0; i < 16; i++)
         if (r[i] != 'A' + i)
             same = false;
-    kprint(same ? "HEAP: krealloc kept the data\n" : "HEAP: krealloc LOST the data\n");
+    kprint("HEAP: krealloc %s the data\n", same ? "kept" : "LOST");
 
     uint32_t *z = kcalloc(1000, sizeof(uint32_t));
     bool zero = true;
@@ -321,41 +290,31 @@ void kmain(void) {
     kfree(d);
 
     heap_get_stats(&st);
-    kprint("HEAP: mapped "); kprint_dec(st.mapped);
-    kprint(" used "); kprint_dec(st.used);
-    kprint(" free "); kprint_dec(st.free);
-    kprint(" blocks "); kprint_dec(st.blocks); kprint("\n");
-    kprint(heap_check() ? "HEAP: heap_check OK\n" : "HEAP: heap_check FAILED\n");
+    kprint("HEAP: mapped %lu used %lu free %lu blocks %lu\n", st.mapped, st.used, st.free, st.blocks);
+    kprint("HEAP: heap_check %s\n", heap_check() ? "OK" : "FAILED");
 
     kprint("HEAP: stress test 20000 rounds...\n");
     uint64_t pmm_before = pmm_get_free_pages();
     uint64_t t0 = timer_get_ticks();
     bool stress_ok = heap_stress(20000);
     uint64_t t1 = timer_get_ticks();
-    kprint(stress_ok ? "HEAP: stress test PASSED" : "HEAP: stress test FAILED");
-    kprint(" in "); kprint_dec((t1 - t0) * 10); kprint(" ms\n");
+    kprint("HEAP: stress test %s in %lu ms\n", stress_ok ? "PASSED" : "FAILED", (t1 - t0) * 10);
 
     heap_get_stats(&st);
-    kprint("HEAP: mapped "); kprint_dec(st.mapped);
-    kprint(" used "); kprint_dec(st.used);
-    kprint(" free "); kprint_dec(st.free);
-    kprint(" blocks "); kprint_dec(st.blocks); kprint("\n");
-    kprint("HEAP: pmm free pages before "); kprint_dec(pmm_before);
-    kprint(" after "); kprint_dec(pmm_get_free_pages()); kprint("\n");
+    kprint("HEAP: mapped %lu used %lu free %lu blocks %lu\n", st.mapped, st.used, st.free, st.blocks);
+    kprint("HEAP: pmm free pages before %lu after %lu\n", pmm_before, pmm_get_free_pages());
 
-    extern const uint8_t prog_hello[], prog_hello_end[];
+    extern const uint8_t prog_a[], prog_a_end[];
+    extern const uint8_t prog_b[], prog_b_end[];
+    extern const uint8_t prog_spin[], prog_spin_end[];
     extern const uint8_t prog_crash[], prog_crash_end[];
-    extern const uint8_t prog_cli[], prog_cli_end[];
 
-    kprint("PROC: free pages before ");
-    kprint_dec(pmm_get_free_pages());
-    kprint("\n");
-
+    process_create("a", prog_a, prog_a_end - prog_a);
+    process_create("b", prog_b, prog_b_end - prog_b);
+    process_create("spin", prog_spin, prog_spin_end - prog_spin);
     process_create("crash", prog_crash, prog_crash_end - prog_crash);
-    process_create("cli", prog_cli, prog_cli_end - prog_cli);
-    process_create("hello", prog_hello, prog_hello_end - prog_hello);
 
-    process_start_next();
+    scheduler_start();
 }
 
 void kernel_idle(void) {
