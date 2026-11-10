@@ -17,6 +17,14 @@ int main(void) {
     check("wait crash", wait(pid, &status) == pid && status == -11);
     check("reaped child", wait(pid, &status) == -1);
 
+    pid = spawn("div");
+    check("wait div", pid > 0 && wait(pid, &status) == pid && status == -8);
+
+    pid = spawn("ud");
+    check("wait ud", pid > 0 && wait(pid, &status) == pid && status == -4);
+
+    check("bad read buffer", read((char *)0x400000, 1) == -1);
+
     check("missing program", spawn("nope") == -1);
     check("kernel pointer", spawn((const char *)0xFFFFFFFF80000000) == -1);
     check("unmapped write", write((const char *)0x10, 1) == -1);

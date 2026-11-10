@@ -4,7 +4,9 @@
 #include "terminal.h"
 #include "process.h"
 #include "vmm.h"
+#include "keyboard.h"
 
+#define SYS_READ  0
 #define SYS_WRITE 1
 #define SYS_YIELD 24
 #define SYS_SLEEP 35
@@ -72,7 +74,28 @@ __asm__(
 
 __attribute__((used))
 uint64_t syscall_handler(struct syscall_regs *regs) {
-    if (regs->rax == SYS_WRITE) {
+    if (regs->rax == SYS_READ) {
+        char *buf = (char *)regs->rdi;
+        uint64_t len = regs->rsi;
+
+        if (len > 4096 || !vmm_user_ok(regs->rdi, len, true)) {
+            regs->rax = -1;
+            return (uint64_t)regs;
+        }
+
+        uint64_t n = 0;
+        while (n < len && keyboard_read_char(&buf[n]))
+            n++;
+
+        // run the int again once a key arrives
+        if (n == 0 && len > 0) {
+            process_block_read();
+            regs->rip -= INT80_LENGTH;
+            return schedule((uint64_t)regs);
+        }
+
+        regs->rax = n;
+    } else if (regs->rax == SYS_WRITE) {
         const char *buf = (const char *)regs->rdi;
         uint64_t len = regs->rsi;
 

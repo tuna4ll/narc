@@ -1,5 +1,6 @@
 #include "libc.h"
 
+#define SYS_READ  0
 #define SYS_WRITE 1
 #define SYS_YIELD 24
 #define SYS_SLEEP 35
@@ -20,6 +21,10 @@ size_t strlen(const char *s) {
     while (s[len] != '\0')
         len++;
     return len;
+}
+
+long read(char *buf, size_t len) {
+    return syscall2(SYS_READ, (long)buf, (long)len);
 }
 
 long write(const char *buf, size_t len) {

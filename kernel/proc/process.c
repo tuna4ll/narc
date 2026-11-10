@@ -267,6 +267,16 @@ void process_sleep(uint64_t ms) {
     current->state = PROC_SLEEPING;
 }
 
+void process_block_read(void) {
+    current->state = PROC_READING;
+}
+
+void process_wake_readers(void) {
+    for (int i = 0; i < MAX_PROCESSES; i++)
+        if (processes[i].state == PROC_READING)
+            processes[i].state = PROC_READY;
+}
+
 static void free_dead_processes(void) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         struct process *p = &processes[i];

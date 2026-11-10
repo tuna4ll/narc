@@ -2,7 +2,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "keyboard.h"
 #include "serial.h"
 #include "terminal.h"
 #include "kprint.h"
@@ -302,11 +301,7 @@ void kmain(void) {
     static const uint8_t bad_elf[64];
     kprint("ELF: bad image %s\n", process_create("bad", bad_elf, sizeof(bad_elf)) ? "ACCEPTED" : "rejected");
 
-    start_program("a");
-    start_program("b");
-    start_program("spin");
-    start_program("crash");
-    start_program("parent");
+    start_program("sh");
 
     scheduler_start();
 }
@@ -314,23 +309,6 @@ void kmain(void) {
 void kernel_idle(void) {
     __asm__ volatile ("sti");
 
-    uint8_t previous = 0;
-
-    for (;;) {
-        uint8_t current = keyboard_get_last_scancode();
-
-        if (current != previous) {
-            previous = current;
-
-            if (current == 0x31) {
-                kprint("N pressed (shout out to narcito)\n");
-            }
-
-            if (current == 0xB1) {
-                kprint("N released\n");
-            }
-        }
-
+    for (;;)
         __asm__ volatile ("hlt");
-    }
 }

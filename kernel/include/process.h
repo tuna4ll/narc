@@ -18,6 +18,7 @@
 #define PROC_SLEEPING 4
 #define PROC_WAITING 5
 #define PROC_ZOMBIE  6
+#define PROC_READING 7
 
 #define PROC_NAME_LEN 32
 
@@ -38,6 +39,8 @@ struct process *process_create(const char *name, const uint8_t *image, uint64_t 
 int process_spawn(const char *name);
 int process_wait(int pid, int *exit_code);
 void process_sleep(uint64_t ms);
+void process_block_read(void);
+void process_wake_readers(void);
 
 __attribute__((noreturn))
 void scheduler_start(void);

@@ -27,7 +27,22 @@ static void keyboard_handler(interrupt_frame_t *frame) {
 
 __attribute__((interrupt))
 static void divide_handler(interrupt_frame_t *frame) {
+    if ((frame->cs & 3) == 3) {
+        kprint("PROC: division error at rip 0x%lx, killing it\n", frame->rip);
+        process_exit(-8);
+    }
+
     panic("division error at rip 0x%lx", frame->rip);
+}
+
+__attribute__((interrupt))
+static void invalid_opcode_handler(interrupt_frame_t *frame) {
+    if ((frame->cs & 3) == 3) {
+        kprint("PROC: invalid opcode at rip 0x%lx, killing it\n", frame->rip);
+        process_exit(-4);
+    }
+
+    panic("invalid opcode at rip 0x%lx", frame->rip);
 }
 
 __attribute__((interrupt))
@@ -144,6 +159,7 @@ static void idt_set_gate(uint8_t vector, void *handler) {
 void idt_init(void) {
     idt_set_gate(0, (void *)divide_handler);
     idt_set_gate(3, (void *)breakpoint_handler);
+    idt_set_gate(6, (void *)invalid_opcode_handler);
     idt_set_gate(8, (void *)double_fault_handler);
     idt[8].ist = 1;
     idt_set_gate(13, (void *)gp_fault_handler);
