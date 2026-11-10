@@ -43,6 +43,8 @@ struct boot_info {
     uint64_t kernel_phys_base;
     uint64_t kernel_virt_base;
     struct boot_framebuffer framebuffer;
+    const uint8_t *initramfs;
+    uint64_t initramfs_size;
 };
 
 bool boot_init(struct boot_info *info);

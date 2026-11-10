@@ -27,12 +27,7 @@ static void keyboard_handler(interrupt_frame_t *frame) {
 
 __attribute__((interrupt))
 static void divide_handler(interrupt_frame_t *frame) {
-    (void)frame;
-    kprint("Division Error!\n");
-
-    for (;;) {
-        __asm__ volatile ("cli; hlt");
-    }
+    panic("division error at rip 0x%lx", frame->rip);
 }
 
 __attribute__((interrupt))
@@ -105,11 +100,7 @@ static void page_fault_handler(
         process_exit(-11);
     }
 
-    kprint("\nPage Fault!\n  address: 0x%lx\n  error:   0x%lx\n  rip:     0x%lx\n", cr2, error_code, frame->rip);
-
-    for (;;) {
-        __asm__ volatile ("cli; hlt");
-    }
+    panic("page fault at 0x%lx error 0x%lx rip 0x%lx", cr2, error_code, frame->rip);
 }
 
 __attribute__((interrupt))
@@ -122,11 +113,7 @@ static void gp_fault_handler(
         process_exit(-13);
     }
 
-    kprint("\nGeneral Protection Fault!\n  error: 0x%lx\n  rip:   0x%lx\n", error_code, frame->rip);
-
-    for (;;) {
-        __asm__ volatile ("cli; hlt");
-    }
+    panic("general protection fault error 0x%lx rip 0x%lx", error_code, frame->rip);
 }
 
 __attribute__((interrupt))
@@ -136,14 +123,7 @@ static void double_fault_handler(
 ) {
     (void)error_code;
 
-    uint64_t rsp;
-    __asm__ volatile ("mov %%rsp, %0" : "=r"(rsp));
-
-    kprint("\nDouble Fault!\n  rip: 0x%lx\n  rsp when it happened: 0x%lx\n  rsp in handler:       0x%lx\n", frame->rip, frame->rsp, rsp);
-
-    for (;;) {
-        __asm__ volatile ("cli; hlt");
-    }
+    panic("double fault rip 0x%lx rsp 0x%lx", frame->rip, frame->rsp);
 }
 
 static void idt_set_gate(uint8_t vector, void *handler) {

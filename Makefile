@@ -36,8 +36,9 @@ FLANTERM_OBJS := $(patsubst $(FLANTERM_DIR)/src/%.c,$(BUILD)/flanterm-obj/%.o,$(
 
 # user code, no sse (limine leaves it off)
 USER_CFLAGS := -m64 -std=gnu11 -O2 -Wall -Wextra -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -mgeneral-regs-only -fno-tree-loop-distribute-patterns
-USER_PROGS := hello crash cli a b spin
-USER_BINS := $(patsubst %,$(BUILD)/user/%.bin,$(USER_PROGS))
+USER_PROGS := hello crash cli a b spin parent
+USER_ELFS := $(patsubst %,$(BUILD)/user/%.elf,$(USER_PROGS))
+INITRAMFS := $(BUILD)/initramfs.tar
 
 ISO := $(BUILD)/narc.iso
 ISO_ROOT := $(BUILD)/iso_root
@@ -75,12 +76,10 @@ $(BUILD)/user/%.o: user/%.c user/libc.h
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 $(BUILD)/user/%.elf: $(BUILD)/user/%.o $(BUILD)/user/libc.o user/linker.ld
-	$(LD) -m elf_x86_64 -nostdlib -static -T user/linker.ld -o $@ $(BUILD)/user/libc.o $<
+	$(LD) -m elf_x86_64 -nostdlib -static -z max-page-size=0x1000 -T user/linker.ld -o $@ $(BUILD)/user/libc.o $<
 
-$(BUILD)/user/%.bin: $(BUILD)/user/%.elf
-	objcopy -O binary $< $@
-
-$(BUILD)/kernel/proc/programs.o: $(USER_BINS)
+$(INITRAMFS): $(USER_ELFS)
+	tar --format=ustar --transform='s/\.elf$$//' -cf $@ -C $(BUILD)/user $(notdir $(USER_ELFS))
 
 $(FLANTERM_SRCS): | $(FLANTERM_DIR)/.git
 
@@ -92,10 +91,11 @@ $(BUILD)/kernel.elf: $(KERNEL_OBJS) $(FLANTERM_OBJS) kernel/linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(KERNEL_OBJS) $(FLANTERM_OBJS)
 
 # bios + uefi iso
-$(ISO): $(BUILD)/kernel.elf boot/limine.conf $(LIMINE_BIN)/limine
+$(ISO): $(BUILD)/kernel.elf $(INITRAMFS) boot/limine.conf $(LIMINE_BIN)/limine
 	rm -rf $(ISO_ROOT)
 	mkdir -p $(ISO_ROOT)/boot/limine $(ISO_ROOT)/EFI/BOOT
 	cp $(BUILD)/kernel.elf $(ISO_ROOT)/boot/kernel.elf
+	cp $(INITRAMFS) $(ISO_ROOT)/boot/initramfs.tar
 	cp boot/limine.conf $(ISO_ROOT)/boot/limine/
 	cp $(LIMINE_BIN)/limine-bios.sys $(LIMINE_BIN)/limine-bios-cd.bin $(LIMINE_BIN)/limine-uefi-cd.bin $(ISO_ROOT)/boot/limine/
 	cp $(LIMINE_BIN)/BOOTX64.EFI $(LIMINE_BIN)/BOOTIA32.EFI $(ISO_ROOT)/EFI/BOOT/
@@ -114,14 +114,14 @@ check: all
 	@wc -c $(ISO)
 
 run: all
-	$(QEMU) -M q35 -m 256M -cdrom $(ISO) -boot d -debugcon stdio -global isa-debugcon.iobase=0xe9
+	$(QEMU) -M q35 -m 256M -cdrom $(ISO) -boot d -serial stdio
 
 run-uefi: all
-	$(QEMU) -M q35 -m 256M -drive if=pflash,unit=0,format=raw,file=$(OVMF),readonly=on -cdrom $(ISO) -boot d -debugcon stdio -global isa-debugcon.iobase=0xe9
+	$(QEMU) -M q35 -m 256M -drive if=pflash,unit=0,format=raw,file=$(OVMF),readonly=on -cdrom $(ISO) -boot d -serial stdio
 
 # keeps deps
 clean:
-	rm -rf $(BUILD)/kernel $(BUILD)/flanterm-obj $(BUILD)/user $(BUILD)/kernel.elf $(ISO_ROOT) $(ISO)
+	rm -rf $(BUILD)/kernel $(BUILD)/flanterm-obj $(BUILD)/user $(BUILD)/kernel.elf $(INITRAMFS) $(ISO_ROOT) $(ISO)
 
 distclean:
 	rm -rf $(BUILD)

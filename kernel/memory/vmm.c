@@ -12,6 +12,7 @@
 #define PT_INDEX(a)   (((a) >> 12) & 0x1FF)
 
 #define MB2 0x200000
+#define USER_SPACE_END 0x800000000000ull
 
 extern char __kernel_start[], __text_start[], __rodata_start[], __data_start[], __kernel_end[];
 
@@ -226,6 +227,31 @@ uint64_t vmm_unmap_page(uint64_t virt) {
     }
 
     return page & PTE_ADDR_MASK;
+}
+
+bool vmm_user_ok(uint64_t virt, uint64_t len, bool write) {
+    if (virt >= USER_SPACE_END || len > USER_SPACE_END - virt)
+        return false;
+
+    uint64_t table_flags = PTE_PRESENT | PTE_USER;
+    uint64_t page_flags = table_flags | (write ? PTE_WRITE : 0);
+    uint64_t pml4 = vmm_read_cr3() & PTE_ADDR_MASK;
+
+    for (uint64_t page = virt & ~0xFFFull; page < virt + len; page += PAGE_SIZE) {
+        uint64_t *table = phys_to_table(pml4);
+        uint64_t e = 0;
+
+        for (int shift = 39; shift >= 12; shift -= 9) {
+            e = table[(page >> shift) & 0x1FF];
+            if ((e & table_flags) != table_flags)
+                return false;
+            table = phys_to_table(e & PTE_ADDR_MASK);
+        }
+
+        if ((e & page_flags) != page_flags)
+            return false;
+    }
+    return true;
 }
 
 void *vmm_phys_to_virt(uint64_t phys) {

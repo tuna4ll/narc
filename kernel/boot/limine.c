@@ -34,6 +34,12 @@ static volatile struct limine_executable_address_request kernel_address_request 
     .revision = 0
 };
 
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_module_request module_request = {
+    .id = LIMINE_MODULE_REQUEST_ID,
+    .revision = 0
+};
+
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t limine_requests_start_marker[] = LIMINE_REQUESTS_START_MARKER;
 
@@ -62,7 +68,9 @@ bool boot_init(struct boot_info *info) {
         || framebuffer_request.response->framebuffer_count < 1
         || memmap_request.response == NULL
         || hhdm_request.response == NULL
-        || kernel_address_request.response == NULL) {
+        || kernel_address_request.response == NULL
+        || module_request.response == NULL
+        || module_request.response->module_count < 1) {
         return false;
     }
 
@@ -85,6 +93,7 @@ bool boot_init(struct boot_info *info) {
     }
 
     struct limine_framebuffer *fb = framebuffer_request.response->framebuffers[0];
+    struct limine_file *initramfs = module_request.response->modules[0];
 
     info->memmap = regions;
     info->memmap_count = memmap->entry_count;
@@ -104,6 +113,8 @@ bool boot_init(struct boot_info *info) {
         .blue_mask_size = fb->blue_mask_size,
         .blue_mask_shift = fb->blue_mask_shift,
     };
+    info->initramfs = initramfs->address;
+    info->initramfs_size = initramfs->size;
 
     return true;
 }

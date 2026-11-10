@@ -4,6 +4,7 @@
 
 #include "kprint.h"
 #include "terminal.h"
+#include "cpu.h"
 
 static void put_padded(const char *s, int len, int width, bool left, char pad) {
     if (!left)
@@ -39,10 +40,7 @@ static void put_number(uint64_t n, unsigned base, bool upper, bool negative,
     put_padded(&buf[i], sizeof(buf) - i, width, left, pad);
 }
 
-void kprint(const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-
+static void vkprint(const char *fmt, va_list ap) {
     for (; *fmt; fmt++) {
         if (*fmt != '%') {
             terminal_putchar(*fmt);
@@ -120,6 +118,30 @@ void kprint(const char *fmt, ...) {
             break;
         }
     }
+}
 
+void kprint(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vkprint(fmt, ap);
     va_end(ap);
+}
+
+void panic(const char *fmt, ...) {
+    static bool panicking = false;
+
+    __asm__ volatile ("cli");
+
+    if (!panicking) {
+        panicking = true;
+
+        va_list ap;
+        va_start(ap, fmt);
+        kprint("\nKERNEL PANIC: ");
+        vkprint(fmt, ap);
+        kprint("\n");
+        va_end(ap);
+    }
+
+    khalt();
 }

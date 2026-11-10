@@ -2,7 +2,10 @@
 
 #define SYS_WRITE 1
 #define SYS_YIELD 24
+#define SYS_SLEEP 35
+#define SYS_SPAWN 59
 #define SYS_EXIT  60
+#define SYS_WAIT  61
 
 int main(void);
 
@@ -29,6 +32,18 @@ void print(const char *s) {
 
 void yield(void) {
     syscall2(SYS_YIELD, 0, 0);
+}
+
+void sleep(unsigned long ms) {
+    syscall2(SYS_SLEEP, (long)ms, 0);
+}
+
+long spawn(const char *name) {
+    return syscall2(SYS_SPAWN, (long)name, 0);
+}
+
+long wait(long pid, int *status) {
+    return syscall2(SYS_WAIT, pid, (long)status);
 }
 
 void exit(int code) {

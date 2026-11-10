@@ -15,17 +15,29 @@
 #define PROC_READY   1
 #define PROC_RUNNING 2
 #define PROC_DEAD    3
+#define PROC_SLEEPING 4
+#define PROC_WAITING 5
+#define PROC_ZOMBIE  6
+
+#define PROC_NAME_LEN 32
 
 struct process {
     int pid;
     int state;
-    const char *name;
+    char name[PROC_NAME_LEN];
     uint64_t pml4;
     uint8_t *kernel_stack;
     uint64_t rsp;
+    struct process *parent;
+    int exit_code;
+    int wait_pid;
+    uint64_t wake_tick;
 };
 
-struct process *process_create(const char *name, const uint8_t *code, uint64_t size);
+struct process *process_create(const char *name, const uint8_t *image, uint64_t size);
+int process_spawn(const char *name);
+int process_wait(int pid, int *exit_code);
+void process_sleep(uint64_t ms);
 
 __attribute__((noreturn))
 void scheduler_start(void);

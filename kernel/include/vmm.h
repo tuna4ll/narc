@@ -22,6 +22,7 @@ uint64_t vmm_virt_to_phys(uint64_t virt);
 bool vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags);
 uint64_t vmm_unmap_page(uint64_t virt);
 bool vmm_map_page_in(uint64_t pml4, uint64_t virt, uint64_t phys, uint64_t flags);
+bool vmm_user_ok(uint64_t virt, uint64_t len, bool write);
 void *vmm_phys_to_virt(uint64_t phys);
 uint64_t vmm_kernel_space(void);
 uint64_t vmm_new_address_space(void);

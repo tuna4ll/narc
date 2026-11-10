@@ -9,6 +9,7 @@
 #include "random.h"
 #include "wallpaper.h"
 #include "heap.h"
+#include "serial.h"
 
 static struct flanterm_context *ft_ctx = NULL;
 
@@ -56,6 +57,8 @@ void terminal_init(const struct boot_framebuffer *fb) {
 }
 
 void terminal_putchar(char c) {
+    serial_putchar(c);
+
     if (ft_ctx == NULL) {
         return;
     }

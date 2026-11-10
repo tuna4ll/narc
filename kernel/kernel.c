@@ -3,8 +3,7 @@
 #include <stdint.h>
 
 #include "keyboard.h"
-#include "io.h"
-#include "cpu.h"
+#include "serial.h"
 #include "terminal.h"
 #include "kprint.h"
 #include "pit.h"
@@ -19,6 +18,7 @@
 #include "kernel.h"
 #include "process.h"
 #include "random.h"
+#include "initramfs.h"
 
 static int not_heap;
 
@@ -86,35 +86,33 @@ static bool heap_stress(int rounds) {
     return heap_check();
 }
 
+static void start_program(const char *name) {
+    if (process_spawn(name) < 0)
+        kprint("PROC: could not start %s\n", name);
+}
+
 void kmain(void) {
-    outb(0xE9, 'K');
+    serial_init();
+    kprint("Narc: booting\n");
 
     struct boot_info boot;
 
-    if (!boot_init(&boot)) {
-        outb(0xE9, 'E');
-        khalt();
-    }
+    if (!boot_init(&boot))
+        panic("boot_init failed");
 
-    if (!pmm_init(boot.memmap, boot.memmap_count, boot.hhdm_offset)) {
-        outb(0xE9, 'P');
-        khalt();
-    }
+    if (!pmm_init(boot.memmap, boot.memmap_count, boot.hhdm_offset))
+        panic("pmm_init failed");
 
     uint64_t limine_cr3 = vmm_read_cr3();
     uint64_t free_before = pmm_get_free_pages();
 
-    if (!vmm_init(&boot)) {
-        outb(0xE9, 'V');
-        khalt();
-    }
+    if (!vmm_init(&boot))
+        panic("vmm_init failed");
 
     uint64_t vmm_pages = free_before - pmm_get_free_pages();
 
-    if (!heap_init()) {
-        outb(0xE9, 'H');
-        khalt();
-    }
+    if (!heap_init())
+        panic("heap_init failed");
 
     terminal_init(&boot.framebuffer);
     kprint("Hello World\n");
@@ -127,10 +125,8 @@ void kmain(void) {
 
     uint64_t page = pmm_alloc_page();
 
-    if (page == 0) {
-        kprint("PMM: allocation failed!\n");
-        khalt();
-    }
+    if (page == 0)
+        panic("PMM: allocation failed");
 
     kprint("PMM: physical page allocated!\n");
 
@@ -144,8 +140,7 @@ void kmain(void) {
     if (memory[0] == 42) {
         kprint("PMM: read/write successful!\n");
     } else {
-        kprint("PMM: read/write failed!\n");
-        khalt();
+        panic("PMM: read/write failed");
     }
 
     pmm_free_page(page);
@@ -209,10 +204,8 @@ void kmain(void) {
     uint64_t free_map = pmm_get_free_pages();
     uint64_t my_phys = pmm_alloc_page();
 
-    if (!vmm_map_page(my_virt, my_phys, PTE_WRITE)) {
-        kprint("VMM: map failed!\n");
-        khalt();
-    }
+    if (!vmm_map_page(my_virt, my_phys, PTE_WRITE))
+        panic("VMM: map failed");
 
     kprint("VMM: mapped 0x%lx -> 0x%lx\n", my_virt, vmm_virt_to_phys(my_virt));
 
@@ -304,15 +297,16 @@ void kmain(void) {
     kprint("HEAP: mapped %lu used %lu free %lu blocks %lu\n", st.mapped, st.used, st.free, st.blocks);
     kprint("HEAP: pmm free pages before %lu after %lu\n", pmm_before, pmm_get_free_pages());
 
-    extern const uint8_t prog_a[], prog_a_end[];
-    extern const uint8_t prog_b[], prog_b_end[];
-    extern const uint8_t prog_spin[], prog_spin_end[];
-    extern const uint8_t prog_crash[], prog_crash_end[];
+    initramfs_init(boot.initramfs, boot.initramfs_size);
 
-    process_create("a", prog_a, prog_a_end - prog_a);
-    process_create("b", prog_b, prog_b_end - prog_b);
-    process_create("spin", prog_spin, prog_spin_end - prog_spin);
-    process_create("crash", prog_crash, prog_crash_end - prog_crash);
+    static const uint8_t bad_elf[64];
+    kprint("ELF: bad image %s\n", process_create("bad", bad_elf, sizeof(bad_elf)) ? "ACCEPTED" : "rejected");
+
+    start_program("a");
+    start_program("b");
+    start_program("spin");
+    start_program("crash");
+    start_program("parent");
 
     scheduler_start();
 }
