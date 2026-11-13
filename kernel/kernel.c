@@ -85,10 +85,6 @@ static bool heap_stress(int rounds) {
     return heap_check();
 }
 
-static void start_program(const char *name) {
-    if (process_spawn(name) < 0)
-        kprint("PROC: could not start %s\n", name);
-}
 
 void kmain(void) {
     serial_init();
@@ -299,9 +295,12 @@ void kmain(void) {
     initramfs_init(boot.initramfs, boot.initramfs_size);
 
     static const uint8_t bad_elf[64];
-    kprint("ELF: bad image %s\n", process_create("bad", bad_elf, sizeof(bad_elf)) ? "ACCEPTED" : "rejected");
+    kprint("ELF: bad image %s\n", process_create("bad", sizeof("bad"), bad_elf, sizeof(bad_elf)) ? "ACCEPTED" : "rejected");
 
-    start_program("sh");
+    // spawn splits the line in place so it cannot be a literal
+    char sh[] = "sh";
+    if (process_spawn(sh) < 0)
+        kprint("PROC: could not start sh\n");
 
     scheduler_start();
 }

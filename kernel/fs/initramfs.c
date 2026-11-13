@@ -5,10 +5,9 @@
 #include "mem.h"
 
 #define TAR_BLOCK 512
-#define TAR_NAME_LEN 100
 
 struct tar_header {
-    char name[TAR_NAME_LEN];
+    char name[INITRAMFS_NAME_LEN];
     char mode[8];
     char uid[8];
     char gid[8];
@@ -32,10 +31,10 @@ static uint64_t parse_octal(const char *s, int n) {
 
 static bool name_matches(const char *field, const char *name) {
     int i = 0;
-    for (; i < TAR_NAME_LEN && name[i] != '\0'; i++)
+    for (; i < INITRAMFS_NAME_LEN && name[i] != '\0'; i++)
         if (field[i] != name[i])
             return false;
-    return i < TAR_NAME_LEN && field[i] == '\0';
+    return i < INITRAMFS_NAME_LEN && field[i] == '\0';
 }
 
 void initramfs_init(const uint8_t *base, uint64_t size) {
@@ -43,8 +42,10 @@ void initramfs_init(const uint8_t *base, uint64_t size) {
     tar_size = size;
 }
 
-bool initramfs_find(const char *name, const uint8_t **data, uint64_t *size) {
+// name may fill all 100 bytes without a nul
+bool initramfs_entry(uint64_t index, const char **name, const uint8_t **data, uint64_t *size) {
     uint64_t off = 0;
+    uint64_t n = 0;
 
     while (tar_size >= TAR_BLOCK && off <= tar_size - TAR_BLOCK) {
         const struct tar_header *h = (const struct tar_header *)(tar_base + off);
@@ -55,7 +56,8 @@ bool initramfs_find(const char *name, const uint8_t **data, uint64_t *size) {
         if (file_size > tar_size - off - TAR_BLOCK)
             return false;
 
-        if ((h->typeflag == '0' || h->typeflag == '\0') && name_matches(h->name, name)) {
+        if ((h->typeflag == '0' || h->typeflag == '\0') && n++ == index) {
+            *name = h->name;
             *data = tar_base + off + TAR_BLOCK;
             *size = file_size;
             return true;
@@ -63,5 +65,14 @@ bool initramfs_find(const char *name, const uint8_t **data, uint64_t *size) {
 
         off += TAR_BLOCK + ((file_size + TAR_BLOCK - 1) & ~(uint64_t)(TAR_BLOCK - 1));
     }
+    return false;
+}
+
+bool initramfs_find(const char *name, const uint8_t **data, uint64_t *size) {
+    const char *entry;
+
+    for (uint64_t i = 0; initramfs_entry(i, &entry, data, size); i++)
+        if (name_matches(entry, name))
+            return true;
     return false;
 }

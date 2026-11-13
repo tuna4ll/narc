@@ -36,7 +36,7 @@ FLANTERM_OBJS := $(patsubst $(FLANTERM_DIR)/src/%.c,$(BUILD)/flanterm-obj/%.o,$(
 
 # user code, no sse (limine leaves it off)
 USER_CFLAGS := -m64 -std=gnu11 -O2 -Wall -Wextra -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -mgeneral-regs-only -fno-tree-loop-distribute-patterns
-USER_PROGS := sh hello crash cli a b spin parent div ud
+USER_PROGS := sh ls cat echo hello crash cli a b spin parent div ud
 USER_ELFS := $(patsubst %,$(BUILD)/user/%.elf,$(USER_PROGS))
 INITRAMFS := $(BUILD)/initramfs.tar
 
@@ -78,8 +78,8 @@ $(BUILD)/user/%.o: user/%.c user/libc.h
 $(BUILD)/user/%.elf: $(BUILD)/user/%.o $(BUILD)/user/libc.o user/linker.ld
 	$(LD) -m elf_x86_64 -nostdlib -static -z max-page-size=0x1000 -T user/linker.ld -o $@ $(BUILD)/user/libc.o $<
 
-$(INITRAMFS): $(USER_ELFS)
-	tar --format=ustar --transform='s/\.elf$$//' -cf $@ -C $(BUILD)/user $(notdir $(USER_ELFS))
+$(INITRAMFS): $(USER_ELFS) user/welcome.txt
+	tar --format=ustar --transform='s/\.elf$$//' -cf $@ -C $(BUILD)/user $(notdir $(USER_ELFS)) -C $(CURDIR)/user welcome.txt
 
 $(FLANTERM_SRCS): | $(FLANTERM_DIR)/.git
 

@@ -1,3 +1,5 @@
+#include <stdbool.h>
+#include <stdint.h>
 
 #include "idt.h"
 #include "kprint.h"
@@ -5,59 +7,37 @@
 #include "keyboard.h"
 #include "process.h"
 
-extern void syscall_entry(void);
+#define VECTOR_BREAKPOINT 3
+#define VECTOR_PAGE_FAULT 14
+#define VECTOR_TIMER 32
+#define VECTOR_KEYBOARD 33
+#define VECTOR_SYSCALL 0x80
 
 static idt_entry_t idt[256];
 static idtr_t idtr;
-
-typedef struct {
-    uint64_t rip;
-    uint64_t cs;
-    uint64_t rflags;
-    uint64_t rsp;
-    uint64_t ss;
-} interrupt_frame_t;
-
-__attribute__((interrupt))
-static void keyboard_handler(interrupt_frame_t *frame) {
-    (void)frame;
-
-    keyboard_handle_irq();
-}
-
-__attribute__((interrupt))
-static void divide_handler(interrupt_frame_t *frame) {
-    if ((frame->cs & 3) == 3) {
-        kprint("PROC: division error at rip 0x%lx, killing it\n", frame->rip);
-        process_exit(-8);
-    }
-
-    panic("division error at rip 0x%lx", frame->rip);
-}
-
-__attribute__((interrupt))
-static void invalid_opcode_handler(interrupt_frame_t *frame) {
-    if ((frame->cs & 3) == 3) {
-        kprint("PROC: invalid opcode at rip 0x%lx, killing it\n", frame->rip);
-        process_exit(-4);
-    }
-
-    panic("invalid opcode at rip 0x%lx", frame->rip);
-}
-
-__attribute__((interrupt))
-static void breakpoint_handler(interrupt_frame_t *frame) {
-    (void)frame;
-    kprint("Breakpoint interrupt!\n");
-}
-
 static volatile uint64_t ticks = 0;
 
-extern void timer_entry(void);
+// stubs for 0 to 33 then the syscall one
+extern const uint64_t interrupt_stubs[];
 
+// every entry builds the same frame so the scheduler can switch from any of them
 __asm__(
-    ".global timer_entry\n"
-    "timer_entry:\n"
+    ".pushsection .text\n"
+    ".macro isr_stub n, has_error\n"
+    "isr_stub_\\n:\n"
+    "    .if \\has_error == 0\n"
+    "    push $0\n"
+    "    .endif\n"
+    "    push $\\n\n"
+    "    jmp interrupt_common\n"
+    ".endm\n"
+    ".irp n, 0,1,2,3,4,5,6,7,9,15,16,18,19,20,22,23,24,25,26,27,28,31,32,33,128\n"
+    "    isr_stub \\n, 0\n"
+    ".endr\n"
+    ".irp n, 8,10,11,12,13,14,17,21,29,30\n"
+    "    isr_stub \\n, 1\n"
+    ".endr\n"
+    "interrupt_common:\n"
     "    push %rax\n"
     "    push %rbx\n"
     "    push %rcx\n"
@@ -73,8 +53,9 @@ __asm__(
     "    push %r13\n"
     "    push %r14\n"
     "    push %r15\n"
+    "    cld\n"
     "    mov %rsp, %rdi\n"
-    "    call timer_interrupt\n"
+    "    call interrupt_dispatch\n"
     "    mov %rax, %rsp\n"
     "    pop %r15\n"
     "    pop %r14\n"
@@ -91,59 +72,74 @@ __asm__(
     "    pop %rcx\n"
     "    pop %rbx\n"
     "    pop %rax\n"
+    "    add $16, %rsp\n"
     "    iretq\n"
+    ".popsection\n"
+    ".pushsection .rodata\n"
+    ".global interrupt_stubs\n"
+    "interrupt_stubs:\n"
+    ".irp n, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,128\n"
+    "    .quad isr_stub_\\n\n"
+    ".endr\n"
+    ".popsection\n"
 );
 
+static int user_exit_code(uint64_t vector) {
+    switch (vector) {
+    case 0:
+        return -8;
+    case 6:
+        return -4;
+    case 13:
+        return -13;
+    default:
+        return -11;
+    }
+}
+
+static uint64_t exception_handler(struct interrupt_frame *f) {
+    if (f->vector == VECTOR_BREAKPOINT) {
+        kprint("Breakpoint interrupt!\n");
+        return (uint64_t)f;
+    }
+
+    // cr2 only means something for page faults
+    uint64_t cr2 = 0;
+    if (f->vector == VECTOR_PAGE_FAULT)
+        __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+
+    // nmi double fault and machine check are never the process fault
+    bool fatal = f->vector == 2 || f->vector == 8 || f->vector == 18;
+
+    if ((f->cs & 3) == 3 && !fatal) {
+        kprint("PROC: exception %lu error 0x%lx rip 0x%lx cr2 0x%lx, killing it\n", f->vector, f->error, f->rip, cr2);
+        process_exit(user_exit_code(f->vector));
+        return schedule((uint64_t)f);
+    }
+
+    panic("exception %lu error 0x%lx rip 0x%lx rsp 0x%lx cr2 0x%lx", f->vector, f->error, f->rip, f->rsp, cr2);
+}
+
 __attribute__((used))
-uint64_t timer_interrupt(uint64_t rsp) {
-    ticks++;
-    pic_send_eoi(0);
-    return scheduler_tick(rsp);
-}
-
-
-__attribute__((interrupt))
-static void page_fault_handler(
-    interrupt_frame_t *frame,
-    uint64_t error_code
-) {
-    uint64_t cr2;
-    __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
-
-    if ((frame->cs & 3) == 3) {
-        kprint("PROC: page fault at 0x%lx error 0x%lx, killing it\n", cr2, error_code);
-        process_exit(-11);
+uint64_t interrupt_dispatch(struct interrupt_frame *f) {
+    if (f->vector == VECTOR_TIMER) {
+        ticks++;
+        pic_send_eoi(0);
+        return scheduler_tick((uint64_t)f);
     }
 
-    panic("page fault at 0x%lx error 0x%lx rip 0x%lx", cr2, error_code, frame->rip);
-}
-
-__attribute__((interrupt))
-static void gp_fault_handler(
-    interrupt_frame_t *frame,
-    uint64_t error_code
-) {
-    if ((frame->cs & 3) == 3) {
-        kprint("PROC: general protection fault at rip 0x%lx, killing it\n", frame->rip);
-        process_exit(-13);
+    if (f->vector == VECTOR_KEYBOARD) {
+        keyboard_handle_irq();
+        return schedule_if_needed((uint64_t)f);
     }
 
-    panic("general protection fault error 0x%lx rip 0x%lx", error_code, frame->rip);
+    if (f->vector == VECTOR_SYSCALL)
+        return syscall_handler(f);
+
+    return exception_handler(f);
 }
 
-__attribute__((interrupt))
-static void double_fault_handler(
-    interrupt_frame_t *frame,
-    uint64_t error_code
-) {
-    (void)error_code;
-
-    panic("double fault rip 0x%lx rsp 0x%lx", frame->rip, frame->rsp);
-}
-
-static void idt_set_gate(uint8_t vector, void *handler) {
-    uint64_t addr = (uint64_t)handler;
-
+static void idt_set_gate(uint8_t vector, uint64_t addr) {
     uint16_t cs;
     __asm__ volatile ("mov %%cs, %0" : "=r"(cs));
 
@@ -157,19 +153,12 @@ static void idt_set_gate(uint8_t vector, void *handler) {
 }
 
 void idt_init(void) {
-    idt_set_gate(0, (void *)divide_handler);
-    idt_set_gate(3, (void *)breakpoint_handler);
-    idt_set_gate(6, (void *)invalid_opcode_handler);
-    idt_set_gate(8, (void *)double_fault_handler);
+    for (int i = 0; i <= VECTOR_KEYBOARD; i++)
+        idt_set_gate(i, interrupt_stubs[i]);
     idt[8].ist = 1;
-    idt_set_gate(13, (void *)gp_fault_handler);
-    idt_set_gate(14, (void *)page_fault_handler);
 
-    idt_set_gate(32, (void *)timer_entry);
-    idt_set_gate(33, (void *)keyboard_handler);
-
-    idt_set_gate(0x80, (void *)syscall_entry);
-    idt[0x80].type_attr = 0xEE;
+    idt_set_gate(VECTOR_SYSCALL, interrupt_stubs[VECTOR_KEYBOARD + 1]);
+    idt[VECTOR_SYSCALL].type_attr = 0xEE;
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (uint64_t)&idt;
@@ -178,7 +167,6 @@ void idt_init(void) {
 
     kprint("IDT initialized!\n");
 }
-
 
 uint64_t timer_get_ticks(void) {
     return ticks;

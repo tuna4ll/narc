@@ -10,6 +10,8 @@
 #define SCANCODE_RELEASED 0x80
 #define SCANCODE_LSHIFT 0x2A
 #define SCANCODE_RSHIFT 0x36
+#define SCANCODE_CTRL 0x1D
+#define SCANCODE_C 0x2E
 
 // us layout indexed by set 1 scancode
 static const char keymap[] =
@@ -21,6 +23,7 @@ static char buffer[BUFFER_SIZE];
 static uint32_t head = 0;
 static uint32_t tail = 0;
 static bool shift = false;
+static bool ctrl = false;
 static bool extended = false;
 
 static void handle_scancode(uint8_t code) {
@@ -29,14 +32,21 @@ static void handle_scancode(uint8_t code) {
         return;
     }
 
-    // arrows and friends would look like keypad digits
-    if (extended) {
-        extended = false;
-        return;
-    }
+    bool was_extended = extended;
+    extended = false;
 
     bool released = code & SCANCODE_RELEASED;
     code &= ~SCANCODE_RELEASED;
+
+    // right ctrl is the extended version of left ctrl
+    if (code == SCANCODE_CTRL) {
+        ctrl = !released;
+        return;
+    }
+
+    // arrows and friends would look like keypad digits
+    if (was_extended)
+        return;
 
     if (code == SCANCODE_LSHIFT || code == SCANCODE_RSHIFT) {
         shift = !released;
@@ -45,6 +55,12 @@ static void handle_scancode(uint8_t code) {
 
     if (released || code >= sizeof(keymap) - 1)
         return;
+
+    if (ctrl) {
+        if (code == SCANCODE_C)
+            process_interrupt();
+        return;
+    }
 
     char c = shift ? keymap_shift[code] : keymap[code];
     if (c == '\0' || head - tail == BUFFER_SIZE)

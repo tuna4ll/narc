@@ -165,7 +165,11 @@ static uint8_t *kstack_alloc(int slot) {
     return stack;
 }
 
-struct process *process_create(const char *name, const uint8_t *image, uint64_t size) {
+// args is nul separated words like hello then world
+struct process *process_create(const char *args, uint64_t args_len, const uint8_t *image, uint64_t size) {
+    if (args_len == 0 || args_len > ARGS_MAX || args[args_len - 1] != '\0')
+        return NULL;
+
     struct process *p = NULL;
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (processes[i].state == PROC_UNUSED) {
@@ -186,12 +190,38 @@ struct process *process_create(const char *name, const uint8_t *image, uint64_t 
         return NULL;
     }
 
+    uint64_t top_phys = 0;
     for (uint64_t i = 1; i <= USER_STACK_PAGES; i++) {
-        if (map_new_page(pml4, USER_STACK_TOP - i * PAGE_SIZE, PTE_WRITE | PTE_NX) == 0) {
+        uint64_t phys = map_new_page(pml4, USER_STACK_TOP - i * PAGE_SIZE, PTE_WRITE | PTE_NX);
+        if (phys == 0) {
             vmm_free_address_space(pml4);
             return NULL;
         }
+        if (i == 1)
+            top_phys = phys;
     }
+
+    // strings then the argv array both fit in the top stack page
+    uint8_t *top = vmm_phys_to_virt(top_phys);
+    uint64_t top_base = USER_STACK_TOP - PAGE_SIZE;
+    uint64_t strings = USER_STACK_TOP - args_len;
+    memcpy(top + (strings - top_base), args, args_len);
+
+    int argc = 0;
+    for (uint64_t i = 0; i < args_len; i++)
+        if (args[i] == '\0')
+            argc++;
+
+    uint64_t argv = (strings - (argc + 1) * sizeof(uint64_t)) & ~(uint64_t)15;
+    uint64_t *vec = (uint64_t *)(top + (argv - top_base));
+    uint64_t at = strings;
+    for (int i = 0; i < argc; i++) {
+        vec[i] = at;
+        while (args[at - strings] != '\0')
+            at++;
+        at++;
+    }
+    vec[argc] = 0;
 
     uint8_t *kstack = kstack_alloc(p - processes);
     if (kstack == NULL) {
@@ -199,18 +229,21 @@ struct process *process_create(const char *name, const uint8_t *image, uint64_t 
         return NULL;
     }
 
-    uint64_t *frame = (uint64_t *)(kstack + KERNEL_STACK_SIZE);
-    *--frame = 0x1B;
-    *--frame = USER_STACK_TOP - 8;
-    *--frame = 0x202;
-    *--frame = 0x23;
-    *--frame = entry;
-    for (int i = 0; i < 15; i++)
-        *--frame = 0;
+    struct interrupt_frame *frame = (struct interrupt_frame *)(kstack + KERNEL_STACK_SIZE) - 1;
+    memset(frame, 0, sizeof(*frame));
+    frame->rip = entry;
+    frame->cs = 0x23;
+    frame->rflags = 0x202;
+    // minus 8 looks like a pushed return address
+    frame->rsp = argv - 8;
+    frame->ss = 0x1B;
+    // libc start takes argc and argv like a normal call
+    frame->rdi = argc;
+    frame->rsi = argv;
 
     int n = 0;
-    for (; n < PROC_NAME_LEN - 1 && name[n] != '\0'; n++)
-        p->name[n] = name[n];
+    for (; n < PROC_NAME_LEN - 1 && args[n] != '\0'; n++)
+        p->name[n] = args[n];
     p->name[n] = '\0';
 
     p->pid = next_pid++;
@@ -219,21 +252,43 @@ struct process *process_create(const char *name, const uint8_t *image, uint64_t 
     p->rsp = (uint64_t)frame;
     p->parent = NULL;
     p->exit_code = 0;
+    memset(p->files, 0, sizeof(p->files));
     p->state = PROC_READY;
 
-    kprint("PROC: created pid %d (%s) cr3 0x%lx entry 0x%lx\n", p->pid, name, pml4, entry);
+    kprint("PROC: created pid %d (%s) cr3 0x%lx entry 0x%lx\n", p->pid, p->name, pml4, entry);
 
     return p;
 }
 
-int process_spawn(const char *name) {
+// squeeze spaces into single nuls and return the packed length
+static uint64_t split_args(char *s) {
+    uint64_t out = 0;
+    bool in_word = false;
+
+    for (uint64_t i = 0; s[i] != '\0'; i++) {
+        if (s[i] == ' ') {
+            if (in_word)
+                s[out++] = '\0';
+            in_word = false;
+            continue;
+        }
+        in_word = true;
+        s[out++] = s[i];
+    }
+    if (in_word)
+        s[out++] = '\0';
+    return out;
+}
+
+int process_spawn(char *line) {
     const uint8_t *image;
     uint64_t size;
+    uint64_t len = split_args(line);
 
-    if (!initramfs_find(name, &image, &size))
+    if (len == 0 || !initramfs_find(line, &image, &size))
         return -1;
 
-    struct process *p = process_create(name, image, size);
+    struct process *p = process_create(line, len, image, size);
     if (p == NULL)
         return -1;
 
@@ -332,6 +387,12 @@ uint64_t schedule(uint64_t rsp) {
     return next->rsp;
 }
 
+uint64_t schedule_if_needed(uint64_t rsp) {
+    if (current == NULL || (current != &idle && current->state == PROC_RUNNING))
+        return rsp;
+    return schedule(rsp);
+}
+
 uint64_t scheduler_tick(uint64_t rsp) {
     if (current == NULL)
         return rsp;
@@ -352,25 +413,77 @@ void scheduler_start(void) {
     kernel_idle();
 }
 
-void process_exit(int64_t code) {
-    kprint("PROC: pid %d (%s) exited with code %ld\n", current->pid, current->name, code);
+static void process_kill(struct process *p, int code) {
+    kprint("PROC: pid %d (%s) exited with code %d\n", p->pid, p->name, code);
 
-    current->exit_code = (int)code;
-    current->state = PROC_DEAD;
+    p->exit_code = code;
+    p->state = PROC_DEAD;
 
-    struct process *parent = current->parent;
-    if (parent != NULL && parent->state == PROC_WAITING && parent->wait_pid == current->pid)
+    struct process *parent = p->parent;
+    if (parent != NULL && parent->state == PROC_WAITING && parent->wait_pid == p->pid)
         parent->state = PROC_READY;
 
     for (int i = 0; i < MAX_PROCESSES; i++) {
-        struct process *p = &processes[i];
-        if (p->state != PROC_UNUSED && p->parent == current) {
-            p->parent = NULL;
-            if (p->state == PROC_ZOMBIE)
-                p->state = PROC_UNUSED;
+        struct process *child = &processes[i];
+        if (child->state != PROC_UNUSED && child->parent == p) {
+            child->parent = NULL;
+            if (child->state == PROC_ZOMBIE)
+                child->state = PROC_UNUSED;
         }
     }
+}
 
-    for (;;)
-        __asm__ volatile ("sti; hlt");
+// caller must schedule right after
+void process_exit(int code) {
+    process_kill(current, code);
+}
+
+// ctrl c kills the waited child at the end of the wait chain
+void process_interrupt(void) {
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        struct process *p = &processes[i];
+        struct process *parent = p->parent;
+
+        if (parent != NULL && parent->state == PROC_WAITING && parent->wait_pid == p->pid
+            && p->state != PROC_WAITING) {
+            kprint("^C\n");
+            process_kill(p, -2);
+        }
+    }
+}
+
+int process_open(const char *name) {
+    const uint8_t *data;
+    uint64_t size;
+
+    if (!initramfs_find(name, &data, &size))
+        return -1;
+
+    for (int i = 0; i < MAX_FILES; i++) {
+        struct file *f = &current->files[i];
+        if (f->data == NULL) {
+            f->data = data;
+            f->size = size;
+            f->offset = 0;
+            return i + FIRST_FD;
+        }
+    }
+    return -1;
+}
+
+struct file *process_file(int fd) {
+    if (fd < FIRST_FD || fd >= FIRST_FD + MAX_FILES)
+        return NULL;
+
+    struct file *f = &current->files[fd - FIRST_FD];
+    return f->data != NULL ? f : NULL;
+}
+
+int process_close(int fd) {
+    struct file *f = process_file(fd);
+    if (f == NULL)
+        return -1;
+
+    f->data = NULL;
+    return 0;
 }

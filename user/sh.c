@@ -1,14 +1,14 @@
 #include "libc.h"
 
-// same as the name limit in the kernel
-#define LINE_LEN 32
+// must stay under the kernel args limit
+#define LINE_LEN 128
 
 static void read_line(char *line) {
     int n = 0;
 
     for (;;) {
         char c;
-        read(&c, 1);
+        read(0, &c, 1);
 
         if (c == '\n') {
             print("\n");

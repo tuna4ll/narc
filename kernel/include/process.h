@@ -21,6 +21,16 @@
 #define PROC_READING 7
 
 #define PROC_NAME_LEN 32
+#define ARGS_MAX 256
+#define MAX_FILES 8
+#define FIRST_FD 3
+
+// data is null when the slot is free
+struct file {
+    const uint8_t *data;
+    uint64_t size;
+    uint64_t offset;
+};
 
 struct process {
     int pid;
@@ -33,22 +43,27 @@ struct process {
     int exit_code;
     int wait_pid;
     uint64_t wake_tick;
+    struct file files[MAX_FILES];
 };
 
-struct process *process_create(const char *name, const uint8_t *image, uint64_t size);
-int process_spawn(const char *name);
+struct process *process_create(const char *args, uint64_t args_len, const uint8_t *image, uint64_t size);
+int process_spawn(char *line);
 int process_wait(int pid, int *exit_code);
 void process_sleep(uint64_t ms);
 void process_block_read(void);
 void process_wake_readers(void);
+void process_exit(int code);
+void process_interrupt(void);
+
+int process_open(const char *name);
+struct file *process_file(int fd);
+int process_close(int fd);
 
 __attribute__((noreturn))
 void scheduler_start(void);
 
 uint64_t schedule(uint64_t rsp);
 uint64_t scheduler_tick(uint64_t rsp);
-
-__attribute__((noreturn))
-void process_exit(int64_t code);
+uint64_t schedule_if_needed(uint64_t rsp);
 
 #endif
