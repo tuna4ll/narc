@@ -69,7 +69,7 @@ $(BUILD)/kernel/%.o: kernel/%.c | $(DEPS_STAMPS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/kernel/console/wallpaper.o: assets/narcito_whitehouse.rgb
+$(BUILD)/kernel/console/wallpaper.o: assets/narcito_bg.rgb
 
 $(BUILD)/user/%.o: user/%.c user/libc.h
 	@mkdir -p $(dir $@)

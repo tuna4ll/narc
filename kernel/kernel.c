@@ -20,6 +20,7 @@
 #include "initramfs.h"
 #include "vfs.h"
 #include "devfs.h"
+#include "rtc.h"
 
 static int not_heap;
 
@@ -91,6 +92,8 @@ static bool heap_stress(int rounds) {
 void kmain(void) {
     serial_init();
     kprint("Narc: booting\n");
+    uint32_t seed = krand_seed();
+    kprint("RANDOM: %s seed 0x%x\n", krand_hardware() ? "rdrand" : "xorshift", seed);
 
     struct boot_info boot;
 
@@ -293,6 +296,22 @@ void kmain(void) {
     heap_get_stats(&st);
     kprint("HEAP: mapped %lu used %lu free %lu blocks %lu\n", st.mapped, st.used, st.free, st.blocks);
     kprint("HEAP: pmm free pages before %lu after %lu\n", pmm_before, pmm_get_free_pages());
+
+    struct rtc_time t1_rtc, t2_rtc;
+    rtc_read(&t1_rtc);
+    kprint("RTC: %u-%u-%u %u:%u:%u %s\n", t1_rtc.year, t1_rtc.month, t1_rtc.day,
+           t1_rtc.hour, t1_rtc.minute, t1_rtc.second, rtc_valid(&t1_rtc) ? "valid" : "INVALID");
+
+    uint64_t rtc_wait_end = timer_get_ticks() + 150;
+    while (timer_get_ticks() < rtc_wait_end)
+        __asm__ volatile ("hlt");
+    rtc_read(&t2_rtc);
+
+    uint32_t s1 = t1_rtc.hour * 3600 + t1_rtc.minute * 60 + t1_rtc.second;
+    uint32_t s2 = t2_rtc.hour * 3600 + t2_rtc.minute * 60 + t2_rtc.second;
+    uint32_t elapsed = (s2 + 86400 - s1) % 86400;
+    kprint("RTC: %u seconds passed in 1500 ms %s\n", elapsed,
+           rtc_valid(&t2_rtc) && (elapsed == 1 || elapsed == 2) ? "PASSED" : "FAILED");
 
     initramfs_init(boot.initramfs, boot.initramfs_size);
     if (!vfs_mount("/", initramfs_root()) || !vfs_mount("/dev", devfs_root()))

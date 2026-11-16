@@ -5,15 +5,15 @@
 
 __asm__(".section .rodata\n"
         "wp_start:\n"
-        ".incbin \"assets/narcito_whitehouse.rgb\"\n"
+        ".incbin \"assets/narcito_bg.rgb\"\n"
         "wp_end:\n"
         ".previous\n");
 
 extern uint8_t wp_start[];
 extern uint8_t wp_end[];
 
-#define IMG_W 700
-#define IMG_H 394
+#define IMG_W 1672
+#define IMG_H 941
 
 bool wallpaper_render(uint32_t *canvas, size_t w, size_t h) {
     if ((size_t)(wp_end - wp_start) != IMG_W * IMG_H * 3)
@@ -55,7 +55,6 @@ bool wallpaper_render(uint32_t *canvas, size_t w, size_t h) {
                 uint32_t top = (a[i] * (256 - wx) + b[i] * wx) / 256;
                 uint32_t bot = (c[i] * (256 - wx) + d[i] * wx) / 256;
                 uint32_t v = (top * (256 - wy) + bot * wy) / 256;
-                v = v * 6 / 10;
                 px = (px << 8) | v;
             }
 
