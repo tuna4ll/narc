@@ -23,9 +23,46 @@ static void read_line(char *line) {
             }
         } else if (c >= ' ' && n < LINE_LEN - 1) {
             line[n++] = c;
-            write(&c, 1);
+            write(1, &c, 1);
         }
     }
+}
+
+// returns the args when the first word of line is name
+static const char *builtin(const char *line, const char *name) {
+    while (*name != '\0')
+        if (*line++ != *name++)
+            return NULL;
+    if (*line != ' ' && *line != '\0')
+        return NULL;
+
+    while (*line == ' ')
+        line++;
+    return line;
+}
+
+static int run_builtin(const char *line) {
+    const char *args;
+
+    if ((args = builtin(line, "cd")) != NULL) {
+        const char *path = *args != '\0' ? args : "/";
+        if (chdir(path) < 0) {
+            print("cd: cannot enter ");
+            print(path);
+            print("\n");
+        }
+        return 1;
+    }
+
+    if (builtin(line, "pwd") != NULL) {
+        char dir[256];
+        if (getcwd(dir, sizeof(dir)) >= 0) {
+            print(dir);
+            print("\n");
+        }
+        return 1;
+    }
+    return 0;
 }
 
 int main(void) {
@@ -35,13 +72,17 @@ int main(void) {
         print("narc> ");
         read_line(line);
 
-        if (line[0] == '\0')
+        const char *cmd = line;
+        while (*cmd == ' ')
+            cmd++;
+
+        if (*cmd == '\0' || run_builtin(cmd))
             continue;
 
-        long pid = spawn(line);
+        long pid = spawn(cmd);
         if (pid < 0) {
             print("sh: cannot run ");
-            print(line);
+            print(cmd);
             print("\n");
             continue;
         }

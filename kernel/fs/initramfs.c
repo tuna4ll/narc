@@ -3,6 +3,7 @@
 
 #include "initramfs.h"
 #include "mem.h"
+#include "heap.h"
 
 #define TAR_BLOCK 512
 
@@ -29,21 +30,16 @@ static uint64_t parse_octal(const char *s, int n) {
     return value;
 }
 
-static bool name_matches(const char *field, const char *name) {
-    int i = 0;
-    for (; i < INITRAMFS_NAME_LEN && name[i] != '\0'; i++)
-        if (field[i] != name[i])
-            return false;
-    return i < INITRAMFS_NAME_LEN && field[i] == '\0';
-}
-
 void initramfs_init(const uint8_t *base, uint64_t size) {
     tar_base = base;
     tar_size = size;
 }
 
+static struct vnode *nodes = NULL;
+static uint64_t node_count = 0;
+
 // name may fill all 100 bytes without a nul
-bool initramfs_entry(uint64_t index, const char **name, const uint8_t **data, uint64_t *size) {
+static bool initramfs_entry(uint64_t index, const char **name, bool *is_dir, const uint8_t **data, uint64_t *size) {
     uint64_t off = 0;
     uint64_t n = 0;
 
@@ -56,8 +52,10 @@ bool initramfs_entry(uint64_t index, const char **name, const uint8_t **data, ui
         if (file_size > tar_size - off - TAR_BLOCK)
             return false;
 
-        if ((h->typeflag == '0' || h->typeflag == '\0') && n++ == index) {
+        bool file = h->typeflag == '0' || h->typeflag == '\0';
+        if ((file || h->typeflag == '5') && n++ == index) {
             *name = h->name;
+            *is_dir = !file;
             *data = tar_base + off + TAR_BLOCK;
             *size = file_size;
             return true;
@@ -68,11 +66,108 @@ bool initramfs_entry(uint64_t index, const char **name, const uint8_t **data, ui
     return false;
 }
 
-bool initramfs_find(const char *name, const uint8_t **data, uint64_t *size) {
-    const char *entry;
+static uint64_t name_length(const char *name) {
+    uint64_t len = 0;
+    while (len < INITRAMFS_NAME_LEN && name[len] != '\0')
+        len++;
+    return len;
+}
 
-    for (uint64_t i = 0; initramfs_entry(i, &entry, data, size); i++)
-        if (name_matches(entry, name))
-            return true;
-    return false;
+static int64_t initramfs_read(struct vnode *node, uint64_t offset, char *buf, uint64_t len) {
+    if (offset >= node->size)
+        return 0;
+
+    uint64_t n = len < node->size - offset ? len : node->size - offset;
+    memcpy(buf, (const uint8_t *)node->data + offset, n);
+    return n;
+}
+
+static struct vnode *initramfs_lookup(struct vnode *dir, const char *name) {
+    return vfs_table_lookup(nodes, node_count, dir, name);
+}
+
+static struct vnode *initramfs_readdir(struct vnode *dir, uint64_t index) {
+    return vfs_table_child(nodes, node_count, dir, index);
+}
+
+static const struct vnode_ops ops = {
+    .read = initramfs_read,
+    .lookup = initramfs_lookup,
+    .readdir = initramfs_readdir,
+};
+
+// walks the path and makes every dir that is missing on the way
+static void add_entry(const char *path, uint64_t path_len, bool is_dir, const uint8_t *data, uint64_t size) {
+    struct vnode *dir = &nodes[0];
+    uint64_t i = 0;
+
+    while (i < path_len) {
+        while (i < path_len && path[i] == '/')
+            i++;
+        uint64_t start = i;
+        while (i < path_len && path[i] != '/')
+            i++;
+
+        uint64_t len = i - start;
+        if (len == 0 || (len == 1 && path[start] == '.'))
+            continue;
+        if (len >= VFS_NAME_LEN || (len == 2 && path[start] == '.' && path[start + 1] == '.'))
+            return;
+
+        char name[VFS_NAME_LEN];
+        memcpy(name, path + start, len);
+        name[len] = '\0';
+
+        uint64_t rest = i;
+        while (rest < path_len && path[rest] == '/')
+            rest++;
+        bool last = rest == path_len;
+
+        struct vnode *node = vfs_table_lookup(nodes, node_count, dir, name);
+        if (node == NULL) {
+            node = &nodes[node_count++];
+            memcpy(node->name, name, len + 1);
+            node->type = last && !is_dir ? VFS_FILE : VFS_DIR;
+            node->ops = &ops;
+            node->parent = dir;
+            if (node->type == VFS_FILE) {
+                node->data = data;
+                node->size = size;
+            }
+        }
+
+        if (node->type != VFS_DIR)
+            return;
+        dir = node;
+    }
+}
+
+struct vnode *initramfs_root(void) {
+    const char *name;
+    bool is_dir;
+    const uint8_t *data;
+    uint64_t size;
+
+    // every path part may need its own node plus one for the root
+    uint64_t capacity = 1;
+    for (uint64_t i = 0; initramfs_entry(i, &name, &is_dir, &data, &size); i++) {
+        uint64_t len = name_length(name);
+        capacity++;
+        for (uint64_t j = 0; j < len; j++)
+            if (name[j] == '/')
+                capacity++;
+    }
+
+    nodes = kcalloc(capacity, sizeof(struct vnode));
+    if (nodes == NULL)
+        return NULL;
+
+    nodes[0].type = VFS_DIR;
+    nodes[0].ops = &ops;
+    node_count = 1;
+
+    for (uint64_t i = 0; initramfs_entry(i, &name, &is_dir, &data, &size); i++)
+        add_entry(name, name_length(name), is_dir, data, size);
+
+    return &nodes[0];
 }

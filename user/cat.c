@@ -21,7 +21,7 @@ int main(int argc, char **argv) {
 
         long n;
         while ((n = read(fd, buf, sizeof(buf))) > 0)
-            write(buf, n);
+            write(1, buf, n);
         close(fd);
     }
     return status;

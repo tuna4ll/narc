@@ -18,6 +18,8 @@
 #include "process.h"
 #include "random.h"
 #include "initramfs.h"
+#include "vfs.h"
+#include "devfs.h"
 
 static int not_heap;
 
@@ -293,6 +295,8 @@ void kmain(void) {
     kprint("HEAP: pmm free pages before %lu after %lu\n", pmm_before, pmm_get_free_pages());
 
     initramfs_init(boot.initramfs, boot.initramfs_size);
+    if (!vfs_mount("/", initramfs_root()) || !vfs_mount("/dev", devfs_root()))
+        panic("vfs mount failed");
 
     static const uint8_t bad_elf[64];
     kprint("ELF: bad image %s\n", process_create("bad", sizeof("bad"), bad_elf, sizeof(bad_elf)) ? "ACCEPTED" : "rejected");

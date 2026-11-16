@@ -11,7 +11,7 @@
 #include "heap.h"
 #include "tss.h"
 #include "idt.h"
-#include "initramfs.h"
+#include "vfs.h"
 
 #define KSTACK_REGION 0xFFFFB00000000000ull
 #define KSTACK_PAGES (KERNEL_STACK_SIZE / PAGE_SIZE)
@@ -253,6 +253,13 @@ struct process *process_create(const char *args, uint64_t args_len, const uint8_
     p->parent = NULL;
     p->exit_code = 0;
     memset(p->files, 0, sizeof(p->files));
+
+    // stdin stdout and stderr
+    struct vnode *console = vfs_lookup("/dev/console");
+    for (int i = 0; i < 3; i++)
+        p->files[i].node = console;
+
+    memcpy(p->cwd, "/", 2);
     p->state = PROC_READY;
 
     kprint("PROC: created pid %d (%s) cr3 0x%lx entry 0x%lx\n", p->pid, p->name, pml4, entry);
@@ -280,18 +287,59 @@ static uint64_t split_args(char *s) {
     return out;
 }
 
-int process_spawn(char *line) {
-    const uint8_t *image;
-    uint64_t size;
-    uint64_t len = split_args(line);
+static const char *cwd(void) {
+    return current != NULL && current->cwd[0] != '\0' ? current->cwd : "/";
+}
 
-    if (len == 0 || !initramfs_find(line, &image, &size))
+// relative paths start at dir and the result is clean and absolute
+static bool absolute_path(const char *dir, const char *path, char *out) {
+    char joined[2 * VFS_PATH_MAX];
+    uint64_t dir_len = path[0] == '/' ? 0 : strlen(dir);
+    uint64_t path_len = strlen(path);
+
+    if (dir_len + 1 + path_len >= sizeof(joined))
+        return false;
+
+    memcpy(joined, dir, dir_len);
+    joined[dir_len] = '/';
+    memcpy(joined + dir_len + 1, path, path_len + 1);
+    return vfs_normalize(joined, out);
+}
+
+static bool has_slash(const char *s) {
+    for (; *s != '\0'; s++)
+        if (*s == '/')
+            return true;
+    return false;
+}
+
+int process_spawn(char *line) {
+    uint64_t len = split_args(line);
+    if (len == 0)
         return -1;
 
-    struct process *p = process_create(line, len, image, size);
+    // bare names come from bin like a fixed search path
+    char path[VFS_PATH_MAX];
+    if (!absolute_path(has_slash(line) ? cwd() : "/bin", line, path))
+        return -1;
+
+    struct vnode *node = vfs_lookup(path);
+    if (node == NULL || node->type != VFS_FILE || node->size == 0)
+        return -1;
+
+    uint8_t *image = kmalloc(node->size);
+    if (image == NULL)
+        return -1;
+
+    struct process *p = NULL;
+    if (vfs_read(node, 0, (char *)image, node->size) == (int64_t)node->size)
+        p = process_create(line, len, image, node->size);
+    kfree(image);
+
     if (p == NULL)
         return -1;
 
+    memcpy(p->cwd, cwd(), strlen(cwd()) + 1);
     p->parent = current;
     return p->pid;
 }
@@ -452,31 +500,29 @@ void process_interrupt(void) {
     }
 }
 
-int process_open(const char *name) {
-    const uint8_t *data;
-    uint64_t size;
-
-    if (!initramfs_find(name, &data, &size))
+int process_open(const char *path) {
+    char abs[VFS_PATH_MAX];
+    struct vnode *node = absolute_path(cwd(), path, abs) ? vfs_lookup(abs) : NULL;
+    if (node == NULL)
         return -1;
 
     for (int i = 0; i < MAX_FILES; i++) {
         struct file *f = &current->files[i];
-        if (f->data == NULL) {
-            f->data = data;
-            f->size = size;
+        if (f->node == NULL) {
+            f->node = node;
             f->offset = 0;
-            return i + FIRST_FD;
+            return i;
         }
     }
     return -1;
 }
 
 struct file *process_file(int fd) {
-    if (fd < FIRST_FD || fd >= FIRST_FD + MAX_FILES)
+    if (fd < 0 || fd >= MAX_FILES)
         return NULL;
 
-    struct file *f = &current->files[fd - FIRST_FD];
-    return f->data != NULL ? f : NULL;
+    struct file *f = &current->files[fd];
+    return f->node != NULL ? f : NULL;
 }
 
 int process_close(int fd) {
@@ -484,6 +530,23 @@ int process_close(int fd) {
     if (f == NULL)
         return -1;
 
-    f->data = NULL;
+    f->node = NULL;
     return 0;
+}
+
+int process_chdir(const char *path) {
+    char abs[VFS_PATH_MAX];
+    if (!absolute_path(cwd(), path, abs))
+        return -1;
+
+    struct vnode *node = vfs_lookup(abs);
+    if (node == NULL || node->type != VFS_DIR)
+        return -1;
+
+    memcpy(current->cwd, abs, strlen(abs) + 1);
+    return 0;
+}
+
+const char *process_cwd(void) {
+    return cwd();
 }

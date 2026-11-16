@@ -79,7 +79,7 @@ $(BUILD)/user/%.elf: $(BUILD)/user/%.o $(BUILD)/user/libc.o user/linker.ld
 	$(LD) -m elf_x86_64 -nostdlib -static -z max-page-size=0x1000 -T user/linker.ld -o $@ $(BUILD)/user/libc.o $<
 
 $(INITRAMFS): $(USER_ELFS) user/welcome.txt
-	tar --format=ustar --transform='s/\.elf$$//' -cf $@ -C $(BUILD)/user $(notdir $(USER_ELFS)) -C $(CURDIR)/user welcome.txt
+	tar --format=ustar --transform='s,^\(.*\)\.elf$$,bin/\1,' -cf $@ -C $(BUILD)/user $(notdir $(USER_ELFS)) -C $(CURDIR)/user welcome.txt
 
 $(FLANTERM_SRCS): | $(FLANTERM_DIR)/.git
 

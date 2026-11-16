@@ -9,6 +9,8 @@
 #define SYS_SPAWN   59
 #define SYS_EXIT    60
 #define SYS_WAIT    61
+#define SYS_GETCWD  79
+#define SYS_CHDIR   80
 #define SYS_READDIR 89
 
 int main(int argc, char **argv);
@@ -30,24 +32,32 @@ long read(int fd, char *buf, size_t len) {
     return syscall3(SYS_READ, fd, (long)buf, (long)len);
 }
 
-long write(const char *buf, size_t len) {
-    return syscall3(SYS_WRITE, (long)buf, (long)len, 0);
+long write(int fd, const char *buf, size_t len) {
+    return syscall3(SYS_WRITE, fd, (long)buf, (long)len);
 }
 
 void print(const char *s) {
-    write(s, strlen(s));
+    write(1, s, strlen(s));
 }
 
-long open(const char *name) {
-    return syscall3(SYS_OPEN, (long)name, 0, 0);
+long open(const char *path) {
+    return syscall3(SYS_OPEN, (long)path, 0, 0);
 }
 
 long close(int fd) {
     return syscall3(SYS_CLOSE, fd, 0, 0);
 }
 
-long readdir(long index, char *buf, size_t len) {
-    return syscall3(SYS_READDIR, index, (long)buf, (long)len);
+long readdir(int fd, char *buf, size_t len) {
+    return syscall3(SYS_READDIR, fd, (long)buf, (long)len);
+}
+
+long chdir(const char *path) {
+    return syscall3(SYS_CHDIR, (long)path, 0, 0);
+}
+
+long getcwd(char *buf, size_t len) {
+    return syscall3(SYS_GETCWD, (long)buf, (long)len, 0);
 }
 
 void yield(void) {
