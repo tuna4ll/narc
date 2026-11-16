@@ -36,7 +36,7 @@ FLANTERM_OBJS := $(patsubst $(FLANTERM_DIR)/src/%.c,$(BUILD)/flanterm-obj/%.o,$(
 
 # user code, no sse (limine leaves it off)
 USER_CFLAGS := -m64 -std=gnu11 -O2 -Wall -Wextra -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-builtin -fno-asynchronous-unwind-tables -mgeneral-regs-only -fno-tree-loop-distribute-patterns
-USER_PROGS := sh ls cat echo hello crash cli a b spin parent div ud
+USER_PROGS := sh ls cat echo hello crash cli a b spin parent div ud fetch clear
 USER_ELFS := $(patsubst %,$(BUILD)/user/%.elf,$(USER_PROGS))
 INITRAMFS := $(BUILD)/initramfs.tar
 
