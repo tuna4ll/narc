@@ -4,6 +4,8 @@
 #define SYS_WRITE   1
 #define SYS_OPEN    2
 #define SYS_CLOSE   3
+#define SYS_MMAP    9
+#define SYS_MUNMAP  11
 #define SYS_YIELD   24
 #define SYS_SLEEP   35
 #define SYS_SPAWN   59
@@ -19,6 +21,23 @@ static long syscall3(long num, long arg1, long arg2, long arg3) {
     long ret;
     __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3) : "memory");
     return ret;
+}
+
+static long syscall6(long num, long a1, long a2, long a3, long a4, long a5, long a6) {
+    long ret;
+    register long r10 __asm__("r10") = a4;
+    register long r8 __asm__("r8") = a5;
+    register long r9 __asm__("r9") = a6;
+    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(num), "D"(a1), "S"(a2), "d"(a3), "r"(r10), "r"(r8), "r"(r9) : "memory");
+    return ret;
+}
+
+void *mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) {
+    return (void *)syscall6(SYS_MMAP, (long)addr, (long)len, prot, flags, fd, offset);
+}
+
+long munmap(void *addr, size_t len) {
+    return syscall3(SYS_MUNMAP, (long)addr, (long)len, 0);
 }
 
 size_t strlen(const char *s) {

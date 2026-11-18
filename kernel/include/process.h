@@ -10,6 +10,8 @@
 #define USER_CODE_ADDR   0x400000
 #define USER_STACK_TOP   0x800000
 #define USER_STACK_PAGES 4
+#define USER_MMAP_BASE   0x100000000000ull
+#define USER_MMAP_END    0x7F0000000000ull
 #define KERNEL_STACK_SIZE 16384
 #define QUANTUM_TICKS 5
 
@@ -45,6 +47,7 @@ struct process {
     uint64_t wake_tick;
     struct file files[MAX_FILES];
     char cwd[VFS_PATH_MAX];
+    uint64_t mmap_next;
 };
 
 struct process *process_create(const char *args, uint64_t args_len, const uint8_t *image, uint64_t size);
@@ -61,6 +64,8 @@ struct file *process_file(int fd);
 int process_close(int fd);
 int process_chdir(const char *path);
 const char *process_cwd(void);
+int64_t process_mmap(uint64_t len, int prot);
+int64_t process_munmap(uint64_t addr, uint64_t len);
 
 __attribute__((noreturn))
 void scheduler_start(void);

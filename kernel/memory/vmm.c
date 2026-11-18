@@ -194,7 +194,11 @@ static bool table_empty(uint64_t *t) {
 }
 
 uint64_t vmm_unmap_page(uint64_t virt) {
-    uint64_t *pml4 = phys_to_table(kernel_pml4);
+    return vmm_unmap_page_in(kernel_pml4, virt);
+}
+
+uint64_t vmm_unmap_page_in(uint64_t pml4_phys, uint64_t virt) {
+    uint64_t *pml4 = phys_to_table(pml4_phys);
 
     uint64_t e = pml4[PML4_INDEX(virt)];
     if (!(e & PTE_PRESENT)) return 0;

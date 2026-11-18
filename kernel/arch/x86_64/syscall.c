@@ -7,11 +7,14 @@
 #include "idt.h"
 #include "vfs.h"
 #include "mem.h"
+#include "errno.h"
 
 #define SYS_READ    0
 #define SYS_WRITE   1
 #define SYS_OPEN    2
 #define SYS_CLOSE   3
+#define SYS_MMAP    9
+#define SYS_MUNMAP  11
 #define SYS_YIELD   24
 #define SYS_SLEEP   35
 #define SYS_SPAWN   59
@@ -23,6 +26,10 @@
 
 #define IO_MAX 4096
 #define INT80_LENGTH 2
+
+#define MAP_PRIVATE   0x02
+#define MAP_FIXED     0x10
+#define MAP_ANONYMOUS 0x20
 
 static bool copy_user_string(uint64_t addr, char *out, int max) {
     for (int i = 0; i < max; i++) {
@@ -115,6 +122,13 @@ uint64_t syscall_handler(struct interrupt_frame *regs) {
         regs->rax = copy_user_string(regs->rdi, path, sizeof(path)) ? process_open(path) : -1;
     } else if (regs->rax == SYS_CLOSE) {
         regs->rax = process_close((int)regs->rdi);
+    } else if (regs->rax == SYS_MMAP) {
+        // the address is only a hint so it is ignored
+        uint64_t flags = regs->r10;
+        bool anon_private = (flags & (MAP_PRIVATE | MAP_ANONYMOUS)) == (MAP_PRIVATE | MAP_ANONYMOUS);
+        regs->rax = anon_private && !(flags & MAP_FIXED) ? process_mmap(regs->rsi, (int)regs->rdx) : -EINVAL;
+    } else if (regs->rax == SYS_MUNMAP) {
+        regs->rax = process_munmap(regs->rdi, regs->rsi);
     } else if (regs->rax == SYS_CHDIR) {
         char path[VFS_PATH_MAX];
         regs->rax = copy_user_string(regs->rdi, path, sizeof(path)) ? process_chdir(path) : -1;

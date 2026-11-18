@@ -12,6 +12,7 @@
 #include "tss.h"
 #include "idt.h"
 #include "vfs.h"
+#include "errno.h"
 
 #define KSTACK_REGION 0xFFFFB00000000000ull
 #define KSTACK_PAGES (KERNEL_STACK_SIZE / PAGE_SIZE)
@@ -22,6 +23,8 @@
 #define PF_W 2
 #define ET_EXEC 2
 #define EM_X86_64 62
+#define PROT_WRITE 2
+#define PROT_EXEC 4
 #define USER_IMAGE_END (USER_STACK_TOP - USER_STACK_PAGES * PAGE_SIZE)
 
 struct elf_header {
@@ -260,6 +263,7 @@ struct process *process_create(const char *args, uint64_t args_len, const uint8_
         p->files[i].node = console;
 
     memcpy(p->cwd, "/", 2);
+    p->mmap_next = USER_MMAP_BASE;
     p->state = PROC_READY;
 
     kprint("PROC: created pid %d (%s) cr3 0x%lx entry 0x%lx\n", p->pid, p->name, pml4, entry);
@@ -549,4 +553,45 @@ int process_chdir(const char *path) {
 
 const char *process_cwd(void) {
     return cwd();
+}
+
+static void unmap_range(uint64_t start, uint64_t len) {
+    for (uint64_t page = start; page < start + len; page += PAGE_SIZE) {
+        uint64_t phys = vmm_unmap_page_in(current->pml4, page);
+        if (phys != 0)
+            pmm_free_page(phys);
+    }
+}
+
+// anonymous memory from a bump pointer so unmapped holes are never handed out again
+int64_t process_mmap(uint64_t len, int prot) {
+    if (len == 0 || len > USER_MMAP_END - current->mmap_next)
+        return -ENOMEM;
+    len = (len + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+
+    uint64_t base = current->mmap_next;
+
+    // prot none only reserves the range so any touch faults
+    if (prot != 0) {
+        uint64_t flags = (prot & PROT_WRITE ? PTE_WRITE : 0) | (prot & PROT_EXEC ? 0 : PTE_NX);
+        for (uint64_t off = 0; off < len; off += PAGE_SIZE) {
+            if (map_new_page(current->pml4, base + off, flags) == 0) {
+                unmap_range(base, off);
+                return -ENOMEM;
+            }
+        }
+    }
+
+    current->mmap_next += len;
+    return base;
+}
+
+// only the mmap area so the image and stack stay safe
+int64_t process_munmap(uint64_t addr, uint64_t len) {
+    if ((addr & (PAGE_SIZE - 1)) || len == 0 || addr < USER_MMAP_BASE
+        || addr >= current->mmap_next || len > current->mmap_next - addr)
+        return -EINVAL;
+
+    unmap_range(addr, (len + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1));
+    return 0;
 }
